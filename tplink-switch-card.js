@@ -41,9 +41,49 @@
       this.render();
     }
 
-    set hass(hass) { this._hass = hass; this.render(); }
+    set hass(hass) {
+      const old = this._hass;
+      this._hass = hass;
+      if (old && !this._statesChanged(old, hass)) return;
+      this.render();
+    }
+
     connectedCallback() { this.render(); }
     getCardSize() { return 6; }
+
+    _watchedEntities() {
+      if (!this.config) return [];
+      const p = this.config.entity_prefix;
+      const ids = [
+        `sensor.${p}_poe_consumption`,
+        `sensor.${p}_network_info`,
+      ];
+      for (let i = 1; i <= this.config.total_ports; i++) {
+        ids.push(`binary_sensor.${p}_port_${i}_state`);
+        if (i <= this.config.poe_ports) {
+          ids.push(`binary_sensor.${p}_port_${i}_poe_state`);
+          ids.push(`switch.${p}_port_${i}_poe_enabled`);
+        }
+        ids.push(`switch.${p}_port_${i}_enabled`);
+      }
+      return ids;
+    }
+
+    _statesChanged(oldHass, newHass) {
+      return this._watchedEntities().some(id => {
+        const o = oldHass.states[id];
+        const n = newHass.states[id];
+        if (o?.state !== n?.state) return true;
+        const oa = o?.attributes ?? {};
+        const na = n?.attributes ?? {};
+        return oa.power_w !== na.power_w ||
+               oa.current_ma !== na.current_ma ||
+               oa.voltage_v !== na.voltage_v ||
+               oa.speed !== na.speed ||
+               oa.power_limit_w !== na.power_limit_w ||
+               oa.power_remain_w !== na.power_remain_w;
+      });
+    }
 
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
@@ -271,6 +311,18 @@
       return `<ha-switch ${e.state === "on" ? "checked" : ""} data-entity="${entityId}"></ha-switch>`;
     }
 
+    _fmtSpeed(raw) {
+      if (!raw) return null;
+      const m = raw.match(/(\d+)/);
+      if (!m) return raw;
+      const n = parseInt(m[1]);
+      if (n >= 10000) return "10G";
+      if (n >= 2500)  return "2.5G";
+      if (n >= 1000)  return "1G";
+      if (n >= 100)   return "100M";
+      return `${n}M`;
+    }
+
     _renderOverview() {
       const pfx   = this.config.entity_prefix;
       const poeS  = this._e(`sensor.${pfx}_poe_consumption`);
@@ -318,7 +370,7 @@
               <div class="ov-label">${consumed.toFixed(1)} / ${limitW} W &nbsp;(${pct.toFixed(0)}%)</div>
             </div>
             <div class="poe-bar-track">
-              <div class="poe-bar-fill" style="width:${pct.toFixed(1)}%"></div>
+              <div class="poe-bar-fill" style="width:${pct.toFixed(1)}%;background:${pct > 95 ? '#c22040' : pct > 80 ? '#f4b942' : 'var(--primary-color, #03a9f4)'}"></div>
             </div>
           </div>
         </div>`;
@@ -340,12 +392,12 @@
       const expanded   = hasToggles && this._expanded.has(port);
 
       const mainRow = `
-        <tr class="port-row${hasToggles ? " expandable" : ""}" data-port="${port}">
+        <tr class="port-row${hasToggles ? " expandable" : ""}" data-port="${port}"${hasToggles ? ` role="button" aria-expanded="${expanded}" aria-label="Port ${port} details"` : ""}>
           <td class="port-num ${isUp ? "up" : ""}">P${port}</td>
           <td class="port-info-cell">
             <div class="port-info">
               <span class="link-dot ${isUp ? "up" : ""}"></span>
-              <span class="port-speed ${isUp ? "active" : ""}">${isUp && speed ? speed : isUp ? "Up" : "Down"}</span>
+              <span class="port-speed ${isUp ? "active" : ""}">${isUp && speed ? this._fmtSpeed(speed) : isUp ? "Up" : "Down"}</span>
               ${hasPoe ? `<span class="poe-badge ${poeOn ? "active" : ""}">${poeOn ? "PoE" : "no PoE"}</span>` : ""}
             </div>
           </td>
@@ -361,7 +413,7 @@
         <tr class="detail-row">
           <td colspan="4">
             <div class="detail-inner">
-              ${isUp && speed ? `<div class="d-item"><div class="d-label">Speed</div><div class="d-value good">${speed}</div></div>` : ""}
+              ${isUp && speed ? `<div class="d-item"><div class="d-label">Speed</div><div class="d-value good">${this._fmtSpeed(speed)}</div></div>` : ""}
               ${hasPoe && poeOn ? `
                 <div class="d-item"><div class="d-label">Power</div><div class="d-value poe">${watts.toFixed(1)} W</div></div>
                 ${attr.current_ma != null ? `<div class="d-item"><div class="d-label">Current</div><div class="d-value">${attr.current_ma} mA</div></div>` : ""}
