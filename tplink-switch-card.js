@@ -31,7 +31,6 @@
       this._portEntitiesCache = new Map();
       this._lastRenderTime = 0;
       this._cachedTotalWatts = 0;
-      this._styleInjected = false;
     }
 
     setConfig(config) {
@@ -58,23 +57,8 @@
       this.render();
     }
 
-    connectedCallback() { 
-      this._injectStyles();
-      this.render(); 
-    }
-
+    connectedCallback() { this.render(); }
     getCardSize() { return 6; }
-
-    // Performance: inject CSS once on connection, not on every render
-    _injectStyles() {
-      if (this._styleInjected) return;
-      
-      const style = document.createElement("style");
-      style.textContent = this._css();
-      this.appendChild(style);
-      
-      this._styleInjected = true;
-    }
 
     _watchedEntities() {
       if (!this.config) return [];
@@ -474,7 +458,7 @@
     render() {
       if (!this.config) return;
       if (!this._hass) {
-        this.innerHTML = `<div class="card"><div class="placeholder">Waiting for Home Assistant…</div></div>`;
+        this.innerHTML = `<div class="card"><style>${this._css()}</style><div class="placeholder">Waiting for Home Assistant…</div></div>`;
         return;
       }
 
@@ -496,6 +480,7 @@
 
       this.innerHTML = `
         <div class="card">
+          <style>${this._css()}</style>
           <div class="card-header">
             <div class="card-title">${this.config.title}</div>
             <div class="summary-pills">
