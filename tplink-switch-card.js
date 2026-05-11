@@ -27,6 +27,10 @@
     constructor() {
       super();
       this._expanded = new Set();
+      // Performance: memoization cache for entity lookups within a render cycle
+      this._portEntitiesCache = new Map();
+      this._lastRenderTime = 0;
+      this._cachedTotalWatts = 0;
     }
 
     setConfig(config) {
@@ -38,6 +42,9 @@
         entity_prefix: "tp_link_switch",
         ...config,
       };
+      // Clear cache when config changes
+      this._portEntitiesCache.clear();
+      this._lastRenderTime = 0;
       this.render();
     }
 
@@ -45,6 +52,8 @@
       const old = this._hass;
       this._hass = hass;
       if (old && !this._statesChanged(old, hass)) return;
+      // Clear cache when state changes
+      this._portEntitiesCache.clear();
       this.render();
     }
 
@@ -87,14 +96,24 @@
 
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
+    // Performance: memoized version of _portEntities within render cycle
     _portEntities(port) {
+      // Check cache first
+      if (this._portEntitiesCache.has(port)) {
+        return this._portEntitiesCache.get(port);
+      }
+
       const p = this.config.entity_prefix;
-      return {
+      const entities = {
         state:       this._e(`binary_sensor.${p}_port_${port}_state`),
         poeState:    this._e(`binary_sensor.${p}_port_${port}_poe_state`),
         poeEnabled:  this._e(`switch.${p}_port_${port}_poe_enabled`),
         portEnabled: this._e(`switch.${p}_port_${port}_enabled`),
       };
+      
+      // Cache for this render cycle
+      this._portEntitiesCache.set(port, entities);
+      return entities;
     }
 
     _toggle(entityId) {
@@ -442,6 +461,10 @@
         this.innerHTML = `<div class="card"><style>${this._css()}</style><div class="placeholder">Waiting for Home Assistant…</div></div>`;
         return;
       }
+
+      // Reset cache at start of render cycle
+      this._portEntitiesCache.clear();
+      this._lastRenderTime = Date.now();
 
       const poePorts     = Array.from({ length: this.config.poe_ports }, (_, i) => i + 1);
       const regularPorts = Array.from(
