@@ -27,6 +27,7 @@
     constructor() {
       super();
       this._expanded = new Set();
+      this._portEntitiesCache = new Map();
     }
 
     setConfig(config) {
@@ -38,6 +39,7 @@
         entity_prefix: "tp_link_switch",
         ...config,
       };
+      this._portEntitiesCache.clear();
       this.render();
     }
 
@@ -88,13 +90,16 @@
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
     _portEntities(port) {
+      if (this._portEntitiesCache.has(port)) return this._portEntitiesCache.get(port);
       const p = this.config.entity_prefix;
-      return {
+      const entities = {
         state:       this._e(`binary_sensor.${p}_port_${port}_state`),
         poeState:    this._e(`binary_sensor.${p}_port_${port}_poe_state`),
         poeEnabled:  this._e(`switch.${p}_port_${port}_poe_enabled`),
         portEnabled: this._e(`switch.${p}_port_${port}_enabled`),
       };
+      this._portEntitiesCache.set(port, entities);
+      return entities;
     }
 
     _toggle(entityId) {
@@ -442,6 +447,8 @@
         this.innerHTML = `<div class="card"><style>${this._css()}</style><div class="placeholder">Waiting for Home Assistant…</div></div>`;
         return;
       }
+
+      this._portEntitiesCache.clear();
 
       const poePorts     = Array.from({ length: this.config.poe_ports }, (_, i) => i + 1);
       const regularPorts = Array.from(
