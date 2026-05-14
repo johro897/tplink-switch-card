@@ -14,7 +14,7 @@
  *
  * Services used:
  *   tplink_easy_smart.set_port_poe_settings  — priority, power_limit per port
- *   tplink_easy_smart.set_poe_power_limit    — global PoE budget limit
+ *   tplink_easy_smart.set_general_poe_limit  — global PoE budget limit
  */
 
 (function () {
@@ -33,8 +33,8 @@
     }
   }
 
-  const POE_PRIORITIES   = ["Low", "High", "Critical"];
-  const POE_POWER_LIMITS = ["Auto", "Class1", "Class2", "Class3", "Class4"];
+  const POE_PRIORITIES   = ["Low", "Middle", "High"];
+  const POE_POWER_LIMITS = ["Auto", "Class 1", "Class 2", "Class 3", "Class 4", "Manual"];
 
   class TplinkSwitchCard extends HTMLElement {
     constructor() {
@@ -58,6 +58,7 @@
         poe_ports: 8,
         total_ports: 16,
         entity_prefix: "tp_link_switch",
+        max_poe_watts: null,
         ...config,
       };
       this._portEntitiesCache.clear();
@@ -114,6 +115,20 @@
 
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
+    _getMacAddress() {
+      const pfx  = this.config.entity_prefix;
+      const netS = this._e(`sensor.${pfx}_network_info`);
+      return netS?.attributes?.mac ?? null;
+    }
+
+    _getSwitchUrl() {
+      const pfx  = this.config.entity_prefix;
+      const netS = this._e(`sensor.${pfx}_network_info`);
+      const ip   = netS?.state;
+      if (!ip || ip === "unknown" || ip === "unavailable") return null;
+      return `http://${ip}`;
+    }
+
     _portEntities(port) {
       if (this._portEntitiesCache.has(port)) return this._portEntitiesCache.get(port);
       const p = this.config.entity_prefix;
@@ -143,9 +158,12 @@
       this._applying.add(port);
       this.render();
       try {
+        const poeEnt = this._portEntities(port);
+        const isEnabled = poeEnt.poeEnabled?.state === "on";
         await this._hass.callService("tplink_easy_smart", "set_port_poe_settings", {
-          entry_id: this.config.entry_id,
-          port_num: port,
+          mac_address: this._getMacAddress(),
+          port_number: port,
+          enabled: isEnabled,
           priority: pending.priority,
           power_limit: pending.power_limit,
         });
@@ -159,18 +177,47 @@
       }
     }
 
+    _showLimitError(msg) {
+      const el = this.querySelector("#poe-limit-error");
+      const input = this.querySelector("#poe-limit-input");
+      if (el) { el.textContent = msg; el.style.display = "inline"; }
+      if (input) input.style.borderColor = "#c22040";
+    }
+
+    _clearLimitError() {
+      const el = this.querySelector("#poe-limit-error");
+      const input = this.querySelector("#poe-limit-input");
+      if (el) { el.textContent = ""; el.style.display = "none"; }
+      if (input) input.style.borderColor = "";
+    }
+
     async _applyPoeLimitGlobal() {
-      const val = parseFloat(this._pendingLimit);
-      if (isNaN(val) || val <= 0 || !this._hass) return;
+      // Read current value directly from DOM so we don't need a re-render
+      const inputEl = this.querySelector("#poe-limit-input");
+      if (inputEl) this._pendingLimit = inputEl.value;
+
+      const val  = parseFloat(this._pendingLimit);
+      const maxW = this.config.max_poe_watts;
+
+      if (isNaN(val) || val <= 0) {
+        this._showLimitError("Enter a value greater than 0");
+        return;
+      }
+      if (maxW && val > maxW) {
+        this._showLimitError(`Cannot exceed hardware max of ${maxW} W`);
+        return;
+      }
+      if (!this._hass) return;
+      this._clearLimitError();
       this._applyingLimit = true;
       this.render();
       try {
-        await this._hass.callService("tplink_easy_smart", "set_poe_power_limit", {
-          entry_id: this.config.entry_id,
+        await this._hass.callService("tplink_easy_smart", "set_general_poe_limit", {
+          mac_address: this._getMacAddress(),
           power_limit: val,
         });
       } catch (err) {
-        console.error("tplink-switch-card: set_poe_power_limit failed", err);
+        console.error("tplink-switch-card: set_general_poe_limit failed", err);
       } finally {
         this._applyingLimit = false;
         this._editingLimit = false;
@@ -269,6 +316,30 @@
         }
         .ov-value.poe    { color: var(--primary-color, #03a9f4); }
         .ov-value.remain { color: #2e8f57; }
+
+        /* Copyable overview tiles */
+        .ov-item.copyable { cursor: pointer; transition: border-color 0.15s ease; }
+        .ov-item.copyable:hover { border-color: var(--primary-color, #03a9f4); }
+        .ov-item.copyable:hover .ov-label::after {
+          content: " · click to copy";
+          font-weight: 400; opacity: 0.7; text-transform: none; letter-spacing: 0;
+        }
+        .ov-item.copied { border-color: #2e8f57 !important; }
+        .ov-item.copied .ov-label::after {
+          content: " · copied!";
+          color: #2e8f57; font-weight: 400; text-transform: none; letter-spacing: 0;
+        }
+
+        /* Switch UI link */
+        .ui-link {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 1.3rem; height: 1.3rem; border-radius: 4px;
+          color: var(--secondary-text-color);
+          background: none; border: none; cursor: pointer; padding: 0;
+          transition: color 0.15s ease; text-decoration: none; flex-shrink: 0;
+        }
+        .ui-link:hover { color: var(--primary-color, #03a9f4); }
+        .ov-value-row { display: flex; align-items: center; gap: 0.3rem; }
 
         /* PoE budget bar */
         .poe-bar-wrap {
@@ -515,11 +586,15 @@
       const gateway = netS?.attributes?.gateway ?? "—";
       const mask    = netS?.attributes?.netmask ?? "—";
 
+      const maxPoeW = this.config.max_poe_watts;
       const limitEditorHtml = this._editingLimit ? `
         <div class="limit-editor">
           <input class="limit-input" type="number" id="poe-limit-input"
-            value="${this._pendingLimit || limitW}" min="1" max="500" step="1">
+            value="${this._pendingLimit || limitW}"
+            min="1" max="${maxPoeW || 1000}" step="0.5">
           <span class="limit-unit">W</span>
+          ${maxPoeW ? `<span class="limit-unit" style="color:var(--secondary-text-color)">max ${maxPoeW} W</span>` : ""}
+          <span class="limit-error" id="poe-limit-error" style="display:none;color:#c22040;font-size:0.65rem"></span>
           <button class="btn-apply" id="poe-limit-apply" ${this._applyingLimit ? "disabled" : ""}>
             ${this._applyingLimit ? "Applying…" : "Set"}
           </button>
@@ -528,11 +603,19 @@
 
       return `
         <div class="overview">
-          <div class="ov-item">
+          <div class="ov-item copyable" data-copy="${ip}">
             <div class="ov-label">IP address</div>
-            <div class="ov-value">${ip}</div>
+            <div class="ov-value-row">
+              <div class="ov-value" style="flex:1">${ip}</div>
+              ${this._getSwitchUrl() ? `<a class="ui-link" href="${this._getSwitchUrl()}" target="_blank" rel="noreferrer" title="Open switch UI">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                  <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                </svg>
+              </a>` : ""}
+            </div>
           </div>
-          <div class="ov-item">
+          <div class="ov-item copyable" data-copy="${mac}">
             <div class="ov-label">MAC</div>
             <div class="ov-value" style="font-size:0.68rem;letter-spacing:0.02em">${mac}</div>
           </div>
@@ -728,6 +811,22 @@
 
     // ── Event binding ─────────────────────────────────────────────────────────
 
+    _clipboardFallback(text, onSuccess) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (ok && onSuccess) onSuccess();
+      } catch (err) {
+        console.warn("tplink-switch-card: clipboard copy failed", err);
+      }
+    }
+
     _bindEvents() {
       // Port row expand/collapse
       this.querySelectorAll(".port-row.expandable").forEach(row => {
@@ -778,6 +877,29 @@
         });
       });
 
+      // Copyable tiles
+      this.querySelectorAll(".ov-item.copyable[data-copy]").forEach(tile => {
+        tile.addEventListener("click", e => {
+          if (e.target.closest("a")) return;
+          const val = tile.dataset.copy;
+          if (!val || val === "—") return;
+
+          const markCopied = () => {
+            tile.classList.add("copied");
+            setTimeout(() => tile.classList.remove("copied"), 1500);
+          };
+
+          // Modern clipboard API (requires HTTPS or localhost)
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(val).then(markCopied).catch(() => {
+              this._clipboardFallback(val, markCopied);
+            });
+          } else {
+            this._clipboardFallback(val, markCopied);
+          }
+        });
+      });
+
       // PoE limit edit pencil
       this.querySelector("#poe-limit-edit")?.addEventListener("click", e => {
         e.stopPropagation();
@@ -788,7 +910,7 @@
         this.render();
       });
 
-      // PoE limit input — keep _pendingLimit in sync without re-render
+      // PoE limit input — only sync value, no re-render
       this.querySelector("#poe-limit-input")?.addEventListener("input", e => {
         this._pendingLimit = e.target.value;
       });
