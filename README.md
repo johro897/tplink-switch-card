@@ -194,24 +194,34 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
-### v0.9
-- Add click-to-copy on IP and MAC overview tiles (HTTP + HTTPS)
-- Add switch web UI link icon next to IP — derived automatically from `network_info`
-- Auto-read MAC address from `network_info` sensor for service calls — no `mac_address` config key needed
-- Add optional `max_poe_watts` hardware cap for the budget editor
-- Validate budget on Set click with inline error message; no re-render on input
+### v0.9.0
+**PoE configuration**
+- Inline configure panel per PoE port — set priority (Low/Middle/High) and power limit (Auto/Class 1–4/Manual) with Apply/Cancel
+- Global PoE budget editor via ✏️ icon in the budget bar
+- Optional `max_poe_watts` config key shows hardware cap and blocks Apply if exceeded
+- Budget validation on Set click with inline error message — no re-render on input
+- All service calls use `mac_address` read automatically from `network_info` sensor
 
-### v0.1
+**Overview**
+- Click IP or MAC tile to copy value to clipboard; falls back to `execCommand` on HTTP
+- Link icon next to IP opens switch web UI in new tab
+- PoE budget bar turns amber above 80% and red above 95%
+
+**Port details**
+- `speed_config` shown as "Configured" in detail row
+- Speed formatter: `1000MF` → `1G`, `2500M` → `2.5G` etc.
+- `role="button"` and `aria-expanded` on expandable rows
+
+**Performance**
+- Dirty-check on `hass` updates — skips re-render when no watched entity changes
+- Per-render entity cache via `_portEntitiesCache`
+
+### v0.1.0
 - Initial release
 - Switch overview: IP, MAC, gateway, netmask, PoE consumption, budget bar
 - Two port sections: PoE ports and regular ports
 - Expandable detail rows with voltage, current, PD class, speed, toggles
-- PoE configure panel: priority and power limit per port with Apply/Cancel
-- Global PoE budget editor with ✏️ inline editor
-- PoE budget bar color warning (amber >80%, red >95%)
-- Speed formatter: `1000MF` → `1G`, `2500M` → `2.5G` etc.
-- Dirty-check on `hass` updates — only re-renders when watched entities change
-- Port entity cache per render cycle
+- Port enable and PoE enable toggles per port
 
 ---
 
