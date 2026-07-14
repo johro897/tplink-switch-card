@@ -35,6 +35,11 @@
 
   const POE_PRIORITIES   = ["Low", "Middle", "High"];
   const POE_POWER_LIMITS = ["Auto", "Class 1", "Class 2", "Class 3", "Class 4", "Manual"];
+  const DEFAULT_OVERVIEW_FIELDS = Object.freeze([
+    "ip", "mac", "gateway", "netmask", "poe_used", "poe_remaining", "poe_budget",
+  ]);
+  const OVERVIEW_FIELD_SET = new Set(DEFAULT_OVERVIEW_FIELDS);
+  const OVERVIEW_LAYOUTS = new Set(["tiles", "compact", "hidden"]);
 
   class TplinkSwitchCard extends HTMLElement {
     constructor() {
@@ -55,12 +60,31 @@
       if (!config) throw new Error("Missing configuration");
       this.config = {
         title: "TP-Link Switch",
+        has_poe: true,
         poe_ports: 8,
         total_ports: 16,
         entity_prefix: "tp_link_switch",
         max_poe_watts: null,
+        overview_layout: "tiles",
+        overview_fields: [...DEFAULT_OVERVIEW_FIELDS],
+        show_switch_link: true,
         ...config,
       };
+      this.config.has_poe = this.config.has_poe !== false;
+      if (!this.config.has_poe) this.config.poe_ports = 0;
+
+      if (!OVERVIEW_LAYOUTS.has(this.config.overview_layout)) {
+        this.config.overview_layout = "tiles";
+      }
+
+      const requestedOverviewFields = Array.isArray(this.config.overview_fields)
+        ? this.config.overview_fields
+        : DEFAULT_OVERVIEW_FIELDS;
+      this.config.overview_fields = [...new Set(
+        requestedOverviewFields.filter(field => OVERVIEW_FIELD_SET.has(field))
+      )];
+      this.config.show_switch_link = this.config.show_switch_link !== false;
+
       this._portEntitiesCache.clear();
       this.render();
     }
@@ -73,17 +97,23 @@
     }
 
     connectedCallback() { this.render(); }
-    getCardSize() { return 7; }
+    getCardSize() {
+      const baseSize = this.config?.has_poe === false ? 5 : 7;
+      const overviewHidden = this.config?.overview_layout === "hidden" ||
+        this.config?.overview_fields?.length === 0;
+      return Math.max(3, baseSize - (overviewHidden ? 1 : 0));
+    }
 
     // ── Change detection ──────────────────────────────────────────────────────
 
     _watchedEntities() {
       if (!this.config) return [];
       const p = this.config.entity_prefix;
-      const ids = [`sensor.${p}_poe_consumption`, `sensor.${p}_network_info`];
+      const ids = [`sensor.${p}_network_info`];
+      if (this.config.has_poe) ids.push(`sensor.${p}_poe_consumption`);
       for (let i = 1; i <= this.config.total_ports; i++) {
         ids.push(`binary_sensor.${p}_port_${i}_state`);
-        if (i <= this.config.poe_ports) {
+        if (this.config.has_poe && i <= this.config.poe_ports) {
           ids.push(`binary_sensor.${p}_port_${i}_poe_state`);
           ids.push(`switch.${p}_port_${i}_poe_enabled`);
         }
@@ -131,11 +161,12 @@
 
     _portEntities(port) {
       if (this._portEntitiesCache.has(port)) return this._portEntitiesCache.get(port);
-      const p = this.config.entity_prefix;
+      const p      = this.config.entity_prefix;
+      const hasPoe = this.config.has_poe && port <= this.config.poe_ports;
       const entities = {
         state:       this._e(`binary_sensor.${p}_port_${port}_state`),
-        poeState:    this._e(`binary_sensor.${p}_port_${port}_poe_state`),
-        poeEnabled:  this._e(`switch.${p}_port_${port}_poe_enabled`),
+        poeState:    hasPoe ? this._e(`binary_sensor.${p}_port_${port}_poe_state`) : null,
+        poeEnabled:  hasPoe ? this._e(`switch.${p}_port_${port}_poe_enabled`) : null,
         portEnabled: this._e(`switch.${p}_port_${port}_enabled`),
       };
       this._portEntitiesCache.set(port, entities);
@@ -296,6 +327,36 @@
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
           gap: 0.4rem; margin-bottom: 1rem;
+        }
+        .overview.compact {
+          display: flex; flex-wrap: wrap; align-items: stretch;
+          gap: 0.35rem; padding: 0.45rem; margin-bottom: 1rem;
+          background: var(--secondary-background-color, rgba(128,128,128,0.06));
+          border: 1px solid var(--divider-color, rgba(128,128,128,0.14));
+          border-radius: 8px;
+        }
+        .overview.compact .ov-item {
+          flex: 1 1 145px; min-width: 0;
+          flex-direction: row; align-items: center; justify-content: space-between;
+          gap: 0.6rem; padding: 0.35rem 0.5rem;
+          background: transparent; border: none; border-radius: 6px;
+        }
+        .overview.compact .ov-item.copyable:hover {
+          background: var(--secondary-background-color, rgba(128,128,128,0.08));
+        }
+        .overview.compact .ov-item.copyable:hover .ov-label::after,
+        .overview.compact .ov-item.copied .ov-label::after {
+          content: none;
+        }
+        .overview.compact .ov-label { flex-shrink: 0; }
+        .overview.compact .ov-value { text-align: right; }
+        .overview.compact .ov-value-row { margin-left: auto; min-width: 0; }
+        .overview.compact .poe-bar-wrap {
+          flex: 1 0 100%;
+          border: none;
+          border-top: 1px solid var(--divider-color, rgba(128,128,128,0.14));
+          border-radius: 0;
+          padding: 0.55rem 0.5rem 0.2rem;
         }
         .ov-item {
           background: var(--secondary-background-color, rgba(128,128,128,0.06));
@@ -571,8 +632,14 @@
     }
 
     _renderOverview() {
-      const pfx  = this.config.entity_prefix;
-      const poeS = this._e(`sensor.${pfx}_poe_consumption`);
+      const pfx    = this.config.entity_prefix;
+      const hasPoe = this.config.has_poe;
+      const layout = this.config.overview_layout;
+      const fields = this.config.overview_fields;
+
+      if (layout === "hidden" || fields.length === 0) return "";
+
+      const poeS = hasPoe ? this._e(`sensor.${pfx}_poe_consumption`) : null;
       const netS = this._e(`sensor.${pfx}_network_info`);
 
       const consumed = parseFloat(poeS?.state ?? 0) || 0;
@@ -581,13 +648,14 @@
       const pct      = limitW > 0 ? Math.min(100, (consumed / limitW) * 100) : 0;
       const barColor = pct > 95 ? "#c22040" : pct > 80 ? "#f4b942" : "var(--primary-color, #03a9f4)";
 
-      const ip      = netS?.state ?? "—";
-      const mac     = netS?.attributes?.mac ?? "—";
-      const gateway = netS?.attributes?.gateway ?? "—";
-      const mask    = netS?.attributes?.netmask ?? "—";
+      const ip        = netS?.state ?? "—";
+      const mac       = netS?.attributes?.mac ?? "—";
+      const gateway   = netS?.attributes?.gateway ?? "—";
+      const mask      = netS?.attributes?.netmask ?? "—";
+      const switchUrl = this.config.show_switch_link ? this._getSwitchUrl() : null;
 
       const maxPoeW = this.config.max_poe_watts;
-      const limitEditorHtml = this._editingLimit ? `
+      const limitEditorHtml = hasPoe && this._editingLimit ? `
         <div class="limit-editor">
           <input class="limit-input" type="number" id="poe-limit-input"
             value="${this._pendingLimit || limitW}"
@@ -601,53 +669,85 @@
           <button class="btn-cancel" id="poe-limit-cancel">Cancel</button>
         </div>` : "";
 
+      const renderField = field => {
+        switch (field) {
+          case "ip":
+            return `
+              <div class="ov-item copyable" data-copy="${ip}">
+                <div class="ov-label">IP address</div>
+                <div class="ov-value-row">
+                  <div class="ov-value" style="flex:1">${ip}</div>
+                  ${switchUrl ? `<a class="ui-link" href="${switchUrl}" target="_blank" rel="noreferrer" title="Open switch UI">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                      <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                  </a>` : ""}
+                </div>
+              </div>`;
+
+          case "mac":
+            return `
+              <div class="ov-item copyable" data-copy="${mac}">
+                <div class="ov-label">MAC</div>
+                <div class="ov-value" style="font-size:0.68rem;letter-spacing:0.02em">${mac}</div>
+              </div>`;
+
+          case "gateway":
+            return `
+              <div class="ov-item">
+                <div class="ov-label">Gateway</div>
+                <div class="ov-value">${gateway}</div>
+              </div>`;
+
+          case "netmask":
+            return `
+              <div class="ov-item">
+                <div class="ov-label">Netmask</div>
+                <div class="ov-value">${mask}</div>
+              </div>`;
+
+          case "poe_used":
+            return hasPoe ? `
+              <div class="ov-item">
+                <div class="ov-label">PoE used</div>
+                <div class="ov-value poe">${consumed.toFixed(1)} W</div>
+              </div>` : "";
+
+          case "poe_remaining":
+            return hasPoe ? `
+              <div class="ov-item">
+                <div class="ov-label">PoE remaining</div>
+                <div class="ov-value remain">${remainW.toFixed(1)} W</div>
+              </div>` : "";
+
+          case "poe_budget":
+            return hasPoe ? `
+              <div class="poe-bar-wrap">
+                <div class="poe-bar-header">
+                  <div class="ov-label">PoE budget</div>
+                  <div style="display:flex;align-items:center;gap:0.3rem">
+                    <div class="ov-label">${consumed.toFixed(1)} / ${limitW} W (${pct.toFixed(0)}%)</div>
+                    <button class="edit-pencil" id="poe-limit-edit" title="Edit PoE budget limit">✏️</button>
+                  </div>
+                </div>
+                <div class="poe-bar-track">
+                  <div class="poe-bar-fill" style="width:${pct.toFixed(1)}%;background:${barColor}"></div>
+                </div>
+                ${limitEditorHtml}
+              </div>` : "";
+
+          default:
+            return "";
+        }
+      };
+
+      const overviewHtml = fields.map(renderField).join("");
+      if (!overviewHtml.trim()) return "";
+
       return `
-        <div class="overview">
-          <div class="ov-item copyable" data-copy="${ip}">
-            <div class="ov-label">IP address</div>
-            <div class="ov-value-row">
-              <div class="ov-value" style="flex:1">${ip}</div>
-              ${this._getSwitchUrl() ? `<a class="ui-link" href="${this._getSwitchUrl()}" target="_blank" rel="noreferrer" title="Open switch UI">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                  <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-                </svg>
-              </a>` : ""}
-            </div>
-          </div>
-          <div class="ov-item copyable" data-copy="${mac}">
-            <div class="ov-label">MAC</div>
-            <div class="ov-value" style="font-size:0.68rem;letter-spacing:0.02em">${mac}</div>
-          </div>
-          <div class="ov-item">
-            <div class="ov-label">Gateway</div>
-            <div class="ov-value">${gateway}</div>
-          </div>
-          <div class="ov-item">
-            <div class="ov-label">Netmask</div>
-            <div class="ov-value">${mask}</div>
-          </div>
-          <div class="ov-item">
-            <div class="ov-label">PoE used</div>
-            <div class="ov-value poe">${consumed.toFixed(1)} W</div>
-          </div>
-          <div class="ov-item">
-            <div class="ov-label">PoE remaining</div>
-            <div class="ov-value remain">${remainW.toFixed(1)} W</div>
-          </div>
-          <div class="poe-bar-wrap">
-            <div class="poe-bar-header">
-              <div class="ov-label">PoE budget</div>
-              <div style="display:flex;align-items:center;gap:0.3rem">
-                <div class="ov-label">${consumed.toFixed(1)} / ${limitW} W (${pct.toFixed(0)}%)</div>
-                <button class="edit-pencil" id="poe-limit-edit" title="Edit PoE budget limit">✏️</button>
-              </div>
-            </div>
-            <div class="poe-bar-track">
-              <div class="poe-bar-fill" style="width:${pct.toFixed(1)}%;background:${barColor}"></div>
-            </div>
-            ${limitEditorHtml}
-          </div>
+        <div class="overview ${layout === "compact" ? "compact" : ""}">
+          ${overviewHtml}
         </div>`;
     }
 
@@ -761,17 +861,20 @@
 
       this._portEntitiesCache.clear();
 
-      const poePorts     = Array.from({ length: this.config.poe_ports }, (_, i) => i + 1);
+      const hasPoe       = this.config.has_poe;
+      const poePorts     = hasPoe ? Array.from({ length: this.config.poe_ports }, (_, i) => i + 1) : [];
       const regularPorts = Array.from(
-        { length: this.config.total_ports - this.config.poe_ports },
-        (_, i) => i + this.config.poe_ports + 1
+        { length: this.config.total_ports - poePorts.length },
+        (_, i) => i + poePorts.length + 1
       );
 
       const totalWatts = this._totalWatts(poePorts);
       const portsUp    = [...poePorts, ...regularPorts].filter(p => this._portEntities(p).state?.state === "on").length;
       const poeActive  = poePorts.filter(p => this._portEntities(p).poeState?.state === "on").length;
       const pfx        = this.config.entity_prefix;
-      const limitW     = parseFloat(this._e(`sensor.${pfx}_poe_consumption`)?.attributes?.power_limit_w ?? 0) || 0;
+      const limitW     = hasPoe
+        ? (parseFloat(this._e(`sensor.${pfx}_poe_consumption`)?.attributes?.power_limit_w ?? 0) || 0)
+        : 0;
 
       this.innerHTML = `
         <div class="card">
@@ -780,12 +883,13 @@
             <div class="card-title">${this.config.title}</div>
             <div class="summary-pills">
               <div class="pill up">${portsUp} / ${this.config.total_ports} up</div>
-              <div class="pill poe">${poeActive} PoE · ${totalWatts.toFixed(1)} W</div>
+              ${hasPoe ? `<div class="pill poe">${poeActive} PoE · ${totalWatts.toFixed(1)} W</div>` : ""}
             </div>
           </div>
 
           ${this._renderOverview()}
 
+          ${hasPoe ? `
           <div class="section">
             <div class="section-header">
               <div class="section-label">PoE ports 1–${this.config.poe_ports}</div>
@@ -795,10 +899,11 @@
               <tbody>${poePorts.map(p => this._renderPort(p, true)).join("")}</tbody>
             </table>
           </div>
+          ` : ""}
 
           <div class="section">
             <div class="section-header">
-              <div class="section-label">Ports ${this.config.poe_ports + 1}–${this.config.total_ports}</div>
+              <div class="section-label">${hasPoe ? `Ports ${this.config.poe_ports + 1}–${this.config.total_ports}` : `Ports 1–${this.config.total_ports}`}</div>
             </div>
             <table class="port-table">
               <tbody>${regularPorts.map(p => this._renderPort(p, false)).join("")}</tbody>
