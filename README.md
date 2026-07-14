@@ -30,6 +30,10 @@ overview_fields:                  # optional: visible fields and their order
   - poe_remaining
   - poe_budget
 show_switch_link: true            # show web UI shortcut beside the IP address
+port_labels:                     # optional labels; omitted ports stay unlabeled
+  1: Router
+  3: Office PC
+  8: Access Point
 ```
 
 That's it. MAC address, IP and switch URL are all read automatically from the integration — nothing else to configure.
@@ -70,6 +74,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **Configurable switch overview** — choose visible fields and their order; use tile, compact or hidden layout
 - **PoE budget bar** — turns amber above 80% and red above 95% load; click ✏️ to edit the budget limit inline
 - **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
+- **Optional port labels** — add readable names to selected ports without configuring every port
 - **Per-port status** — link state dot, formatted link speed (1G / 100M / 2.5G), PoE badge and wattage
 - **Expandable detail rows** — click a port to reveal voltage, current, PD class, configured speed, priority, power limit and enable toggles
 - **PoE configuration panel** — configure PoE priority and power limit per port with Apply/Cancel directly in the card
@@ -143,6 +148,22 @@ The card has three interaction levels:
 | `overview_layout` | No | `tiles` | Overview design: `tiles`, `compact`, or `hidden` |
 | `overview_fields` | No | all fields | Ordered list of visible overview fields. An empty list hides the overview |
 | `show_switch_link` | No | `true` | Show the switch web-interface shortcut beside the IP address |
+| `port_labels` | No | `{}` | Optional mapping of port numbers to labels. Ports not listed remain unlabeled |
+
+### Port labels
+
+Use a sparse YAML mapping so only the ports that need a name have to be listed:
+
+```yaml
+port_labels:
+  1: Router
+  3: Office PC
+  7: NAS
+  8: Access Point Wohnzimmer
+  24: Uplink
+```
+
+Port numbers may be omitted between entries and do not need to be sorted. Empty labels, invalid port numbers and ports above `total_ports` are ignored. Long labels are shortened visually in the row; hovering shows the complete text.
 
 ### Overview options
 
@@ -287,6 +308,10 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ## Changelog
 
 ### Unreleased
+
+**Port labels**
+- Added sparse `port_labels` mapping for optional per-port names
+- Labels are validated, HTML-escaped and truncated cleanly in narrow cards
 
 **Configurable overview**
 - Added `overview_layout` with `tiles`, `compact`, and `hidden`
