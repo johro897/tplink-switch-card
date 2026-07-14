@@ -68,6 +68,7 @@
         overview_layout: "tiles",
         overview_fields: [...DEFAULT_OVERVIEW_FIELDS],
         show_switch_link: true,
+        port_labels: {},
         ...config,
       };
       this.config.has_poe = this.config.has_poe !== false;
@@ -84,6 +85,18 @@
         requestedOverviewFields.filter(field => OVERVIEW_FIELD_SET.has(field))
       )];
       this.config.show_switch_link = this.config.show_switch_link !== false;
+
+      const requestedPortLabels = this.config.port_labels;
+      const portLabels = {};
+      if (requestedPortLabels && typeof requestedPortLabels === "object" && !Array.isArray(requestedPortLabels)) {
+        Object.entries(requestedPortLabels).forEach(([key, rawLabel]) => {
+          const port = Number(key);
+          if (!Number.isInteger(port) || port < 1 || port > this.config.total_ports || rawLabel == null) return;
+          const label = String(rawLabel).trim();
+          if (label) portLabels[port] = label;
+        });
+      }
+      this.config.port_labels = portLabels;
 
       this._portEntitiesCache.clear();
       this.render();
@@ -142,6 +155,15 @@
     }
 
     // ── Entity helpers ────────────────────────────────────────────────────────
+
+    _escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
 
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
@@ -488,6 +510,13 @@
         .port-info { display: flex; align-items: center; gap: 0.4rem; }
         .port-speed { font-size: 0.65rem; color: var(--secondary-text-color); white-space: nowrap; }
         .port-speed.active { color: #2e8f57; }
+        .port-label {
+          min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          font-size: 0.68rem; font-weight: 500; color: var(--primary-text-color);
+        }
+        .port-label::before {
+          content: "·"; margin-right: 0.4rem; color: var(--secondary-text-color);
+        }
 
         .poe-badge {
           font-size: 0.58rem; font-weight: 700;
@@ -758,6 +787,8 @@
       const watts = hasPoe ? (parseFloat(ent.poeState?.attributes?.power_w ?? 0) || 0) : 0;
       const speed       = ent.state?.attributes?.speed ?? null;
       const speedConfig = ent.state?.attributes?.speed_config ?? null;
+      const portLabel   = this.config.port_labels?.[port] ?? "";
+      const safeLabel   = portLabel ? this._escapeHtml(portLabel) : "";
 
       const pfx         = this.config.entity_prefix;
       const poeEnabledId  = hasPoe && ent.poeEnabled  ? `switch.${pfx}_port_${port}_poe_enabled`  : null;
@@ -770,12 +801,13 @@
 
       const mainRow = `
         <tr class="port-row${hasToggles ? " expandable" : ""}" data-port="${port}"
-          ${hasToggles ? `role="button" aria-expanded="${expanded}" aria-label="Port ${port} details"` : ""}>
+          ${hasToggles ? `role="button" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
           <td class="port-num ${isUp ? "up" : ""}">P${port}</td>
           <td class="port-info-cell">
             <div class="port-info">
               <span class="link-dot ${isUp ? "up" : ""}"></span>
               <span class="port-speed ${isUp ? "active" : ""}">${isUp && speed ? this._fmtSpeed(speed) : isUp ? "Up" : "Down"}</span>
+              ${safeLabel ? `<span class="port-label" title="${safeLabel}">${safeLabel}</span>` : ""}
               ${hasPoe ? `<span class="poe-badge ${poeOn ? "active" : ""}">${poeOn ? "PoE" : "no PoE"}</span>` : ""}
             </div>
           </td>
