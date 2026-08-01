@@ -193,6 +193,8 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
+### v1.0.0
+Verified version. Now official release
 
 ### v0.9.0
 **PoE configuration**
