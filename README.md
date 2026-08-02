@@ -1,6 +1,6 @@
 # TP-Link Switch Card
 
-A custom Lovelace card for Home Assistant that gives you a clean, compact overview of your TP-Link Easy Smart switch — including non-PoE models, configurable overview fields, port states, link speeds and per-port controls.
+A custom Lovelace card for Home Assistant that gives you a clean, compact overview of your TP-Link Easy Smart switch — including PoE and non-PoE models, configurable overview fields, port states, link speeds and per-port controls.
 
 Built for the [TP-Link Easy Smart](https://github.com/vmakeev/hass_tplink_easy_smart) custom integration. No templates, shell commands, or extra helpers required.
 
@@ -306,10 +306,7 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
-### v1.0.0
-Verified version. Now official release
-
-### Unreleased
+### 1.1.0
 
 **Port labels**
 - Added sparse `port_labels` mapping for optional per-port names
@@ -319,6 +316,9 @@ Verified version. Now official release
 - Added `overview_layout` with `tiles`, `compact`, and `hidden`
 - Added ordered `overview_fields` selection
 - Added `show_switch_link` to hide the switch web-interface shortcut
+
+### v1.0.0
+Verified version. Now official release
 
 ### v0.9.0
 **PoE configuration**
