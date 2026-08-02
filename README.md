@@ -1,6 +1,6 @@
 # TP-Link Switch Card
 
-A custom Lovelace card for Home Assistant that gives you a clean, compact overview of your TP-Link Easy Smart switch — port states, PoE consumption, link speeds, per-port controls and PoE configuration, all in one card.
+A custom Lovelace card for Home Assistant that gives you a clean, compact overview of your TP-Link Easy Smart switch — including PoE and non-PoE models, configurable overview fields, port states, link speeds and per-port controls.
 
 Built for the [TP-Link Easy Smart](https://github.com/vmakeev/hass_tplink_easy_smart) custom integration. No templates, shell commands, or extra helpers required.
 
@@ -16,20 +16,65 @@ Install the card, then add this to your dashboard:
 type: custom:tplink-switch-card
 title: TP-Link Switch
 entity_prefix: tp_link_switch   # match your integration's entity prefix
+has_poe: true                   # default: true
 poe_ports: 8                    # number of PoE-capable ports (counted from port 1)
 total_ports: 16                 # total number of switch ports
 max_poe_watts: 150              # optional: hardware PoE cap (blocks budget editor above this)
+overview_layout: tiles            # tiles, compact or hidden
+overview_fields:                  # optional: visible fields and their order
+  - ip
+  - mac
+  - gateway
+  - netmask
+  - poe_used
+  - poe_remaining
+  - poe_budget
+show_switch_link: true            # show web UI shortcut beside the IP address
+port_labels:                     # optional labels; omitted ports stay unlabeled
+  1: Router
+  3: Office PC
+  8: Access Point
 ```
 
 That's it. MAC address, IP and switch URL are all read automatically from the integration — nothing else to configure.
+
+For a switch without PoE support, disable PoE completely:
+
+```yaml
+type: custom:tplink-switch-card
+title: TP-Link Switch
+entity_prefix: tp_link_switch
+has_poe: false
+total_ports: 16
+```
+
+With `has_poe: false`, the card does not watch PoE entities and hides the PoE summary, consumption tiles, budget editor, badges, power values, toggles and configuration controls.
+
+A compact overview for the TL-SG1024DE can show only the useful network information:
+
+```yaml
+type: custom:tplink-switch-card
+title: TP-Link Switch Verwaltung
+entity_prefix: tp_link_switch
+has_poe: false
+total_ports: 24
+overview_layout: compact
+overview_fields:
+  - ip
+  - gateway
+show_switch_link: true
+```
+
+Set `overview_layout: hidden` or `overview_fields: []` to remove the overview completely.
 
 ---
 
 ## Features
 
-- **Switch overview** — IP address (with link to switch web UI), MAC, gateway, netmask, PoE used/remaining and a live budget bar
+- **Configurable switch overview** — choose visible fields and their order; use tile, compact or hidden layout
 - **PoE budget bar** — turns amber above 80% and red above 95% load; click ✏️ to edit the budget limit inline
-- **Two port sections** — PoE ports and regular ports displayed separately
+- **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
+- **Optional port labels** — add readable names to selected ports without configuring every port
 - **Per-port status** — link state dot, formatted link speed (1G / 100M / 2.5G), PoE badge and wattage
 - **Expandable detail rows** — click a port to reveal voltage, current, PD class, configured speed, priority, power limit and enable toggles
 - **PoE configuration panel** — configure PoE priority and power limit per port with Apply/Cancel directly in the card
@@ -96,9 +141,76 @@ The card has three interaction levels:
 | --- | --- | --- | --- |
 | `title` | No | `TP-Link Switch` | Card header text |
 | `entity_prefix` | No | `tp_link_switch` | Prefix used to build all entity IDs — must match the prefix your integration uses |
-| `poe_ports` | No | `8` | Number of PoE-capable ports, counted from port 1 |
+| `has_poe` | No | `true` | Set to `false` for switches without PoE. Hides all PoE UI and stops watching PoE entities |
+| `poe_ports` | No | `8` | Number of PoE-capable ports, counted from port 1. Ignored when `has_poe` is `false` |
 | `total_ports` | No | `16` | Total number of switch ports |
-| `max_poe_watts` | No | — | Hardware PoE maximum in watts (e.g. `150` for TL-SG1016PE). Shows the cap in the budget editor and blocks Apply if exceeded |
+| `max_poe_watts` | No | — | Hardware PoE maximum in watts (e.g. `150` for TL-SG1016PE). Ignored when `has_poe` is `false` |
+| `overview_layout` | No | `tiles` | Overview design: `tiles`, `compact`, or `hidden` |
+| `overview_fields` | No | all fields | Ordered list of visible overview fields. An empty list hides the overview |
+| `show_switch_link` | No | `true` | Show the switch web-interface shortcut beside the IP address |
+| `port_labels` | No | `{}` | Optional mapping of port numbers to labels. Ports not listed remain unlabeled |
+
+### Port labels
+
+Use a sparse YAML mapping so only the ports that need a name have to be listed:
+
+```yaml
+port_labels:
+  1: Router
+  3: Office PC
+  7: NAS
+  8: Access Point Wohnzimmer
+  24: Uplink
+```
+
+Port numbers may be omitted between entries and do not need to be sorted. Empty labels, invalid port numbers and ports above `total_ports` are ignored. Long labels are shortened visually in the row; hovering shows the complete text.
+
+### Overview options
+
+Supported `overview_fields` values are:
+
+- `ip`
+- `mac`
+- `gateway`
+- `netmask`
+- `poe_used`
+- `poe_remaining`
+- `poe_budget`
+
+The list order is also the display order. PoE fields are ignored automatically when `has_poe` is `false`. IP and MAC remain clickable for copying when visible.
+
+Minimal tile overview:
+
+```yaml
+overview_layout: tiles
+overview_fields:
+  - ip
+```
+
+Compact network overview:
+
+```yaml
+overview_layout: compact
+overview_fields:
+  - ip
+  - gateway
+  - netmask
+```
+
+Keep the IP address but hide the web-interface shortcut:
+
+```yaml
+show_switch_link: false
+overview_fields:
+  - ip
+  - mac
+```
+
+Hide the complete overview:
+
+```yaml
+overview_layout: hidden
+```
 
 ### Services used for write operations
 
@@ -135,7 +247,7 @@ The card builds all entity IDs automatically from `entity_prefix`. No manual ent
 | `switch.{prefix}_port_{n}_poe_enabled` | PoE enable/disable toggle |
 | `switch.{prefix}_port_{n}_enabled` | Port enable/disable toggle |
 
-Entities that are missing or unavailable are handled gracefully — the corresponding field is hidden or shows `—`.
+Entities that are missing or unavailable are handled gracefully — the corresponding field is hidden or shows `—`. When `has_poe` is `false`, PoE entities are not read or watched at all.
 
 ---
 
@@ -184,15 +296,27 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ## Tested with
 
-| Device | Firmware |
-| --- | --- |
-| TL-SG1016PE | 2.0 |
+| Device | Hardware | Firmware |
+| --- | --- | --- |
+| TL-SG1016PE | — | 2.0 |
+| TL-SG1024DE | 7.0 | 1.0.0 Build 20230616 Rel.34205 |
 
 Other TP-Link Easy Smart switches using the same integration should work as long as their entities follow the same naming pattern.
 
 ---
 
 ## Changelog
+### 1.1.0
+
+**Port labels**
+- Added sparse `port_labels` mapping for optional per-port names
+- Labels are validated, HTML-escaped and truncated cleanly in narrow cards
+
+**Configurable overview**
+- Added `overview_layout` with `tiles`, `compact`, and `hidden`
+- Added ordered `overview_fields` selection
+- Added `show_switch_link` to hide the switch web-interface shortcut
+
 ### v1.0.0
 Verified version. Now official release
 
