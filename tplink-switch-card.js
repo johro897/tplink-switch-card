@@ -4,7 +4,7 @@
  *
  * UX levels:
  *   1. Port row        — link dot, speed, PoE badge, wattage
- *   2. Detail row      — all read values + toggles + Configure button (PoE ports only)
+ *   2. Detail row      — all read values + toggles + label editor + Configure button (PoE ports only)
  *   3. Configure panel — inline PoE priority + power limit editor with Apply/Cancel
  *
  * Overview:
@@ -40,6 +40,7 @@
   ]);
   const OVERVIEW_FIELD_SET = new Set(DEFAULT_OVERVIEW_FIELDS);
   const OVERVIEW_LAYOUTS = new Set(["tiles", "compact", "hidden"]);
+  const MAX_LABEL_LENGTH = 40;
 
   class TplinkSwitchCard extends HTMLElement {
     constructor() {
@@ -54,10 +55,16 @@
       this._pendingLimit  = "";        // draft global PoE limit
       this._applying      = new Set(); // ports currently awaiting service call
       this._applyingLimit = false;
+
+      // Label editing
+      this._labelDrafts   = new Map(); // port → unsaved input text (survives re-renders)
+      this._savingLabel   = new Set(); // ports currently persisting a label
+      this._localLabelsCache = null;   // per-render cache of localStorage overrides
     }
 
     setConfig(config) {
       if (!config) throw new Error("Missing configuration");
+      this._rawConfig = config; // untouched original — used to locate this card in the Lovelace config
       this.config = {
         title: "TP-Link Switch",
         has_poe: true,
@@ -69,6 +76,8 @@
         overview_fields: [...DEFAULT_OVERVIEW_FIELDS],
         show_switch_link: true,
         port_labels: {},
+        editable_labels: true,
+        font_scale: 1,
         ...config,
       };
       this.config.has_poe = this.config.has_poe !== false;
@@ -77,6 +86,12 @@
       if (!OVERVIEW_LAYOUTS.has(this.config.overview_layout)) {
         this.config.overview_layout = "tiles";
       }
+
+      const scale = Number(this.config.font_scale);
+      this.config.font_scale = Number.isFinite(scale)
+        ? Math.min(2, Math.max(0.7, scale))
+        : 1;
+      this.config.editable_labels = this.config.editable_labels !== false;
 
       const requestedOverviewFields = Array.isArray(this.config.overview_fields)
         ? this.config.overview_fields
@@ -165,6 +180,12 @@
         .replaceAll("'", "&#39;");
     }
 
+    // Scaled font size — base rem value multiplied by config font_scale
+    _fs(rem) {
+      const s = this.config?.font_scale ?? 1;
+      return `${+(rem * s).toFixed(3)}rem`;
+    }
+
     _e(entityId) { return this._hass?.states[entityId] ?? null; }
 
     _getMacAddress() {
@@ -193,6 +214,156 @@
       };
       this._portEntitiesCache.set(port, entities);
       return entities;
+    }
+
+    // ── Port labels ───────────────────────────────────────────────────────────
+
+    _labelStorageKey() {
+      const id = this._getMacAddress() ?? this.config.entity_prefix;
+      return `${CARD_NAME}:labels:${id}`;
+    }
+
+    _localLabels() {
+      if (this._localLabelsCache) return this._localLabelsCache;
+      let labels = {};
+      try {
+        const raw = localStorage.getItem(this._labelStorageKey());
+        const parsed = raw ? JSON.parse(raw) : {};
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) labels = parsed;
+      } catch (err) {
+        console.warn("tplink-switch-card: could not read local labels", err);
+      }
+      this._localLabelsCache = labels;
+      return labels;
+    }
+
+    _writeLocalLabels(labels) {
+      this._localLabelsCache = null;
+      try {
+        if (Object.keys(labels).length === 0) {
+          localStorage.removeItem(this._labelStorageKey());
+        } else {
+          localStorage.setItem(this._labelStorageKey(), JSON.stringify(labels));
+        }
+      } catch (err) {
+        console.warn("tplink-switch-card: could not write local labels", err);
+      }
+    }
+
+    // Effective label: localStorage override (may be "" = removed) wins over config
+    _effectiveLabel(port) {
+      const local = this._localLabels();
+      const value = Object.prototype.hasOwnProperty.call(local, port)
+        ? local[port]
+        : this.config.port_labels?.[port];
+      return value ? String(value) : "";
+    }
+
+    // Locate the hui-root lovelace object by walking the HA DOM
+    _getLovelace() {
+      try {
+        let node = document.querySelector("home-assistant");
+        node = node?.shadowRoot?.querySelector("home-assistant-main");
+        node = node?.shadowRoot;
+        node = node?.querySelector("ha-drawer partial-panel-resolver")
+            ?? node?.querySelector("partial-panel-resolver")
+            ?? node?.querySelector("app-drawer-layout partial-panel-resolver");
+        node = (node?.shadowRoot ?? node)?.querySelector("ha-panel-lovelace");
+        node = node?.shadowRoot?.querySelector("hui-root");
+        return node?.lovelace ?? null;
+      } catch (err) {
+        return null;
+      }
+    }
+
+    // Recursively collect all tplink-switch-card configs inside a Lovelace config tree
+    _collectCardConfigs(node, matches) {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach(item => this._collectCardConfigs(item, matches));
+        return;
+      }
+      if (node.type === `custom:${CARD_NAME}`) matches.push(node);
+      ["views", "sections", "cards", "card", "rows", "elements"].forEach(key => {
+        if (node[key]) this._collectCardConfigs(node[key], matches);
+      });
+    }
+
+    /*
+     * Persist labels into the dashboard config via lovelace.saveConfig.
+     * Returns true on success. Fails gracefully (→ localStorage fallback) when:
+     *   - the dashboard runs in YAML mode
+     *   - the card cannot be uniquely located in the config
+     *   - the HA DOM layout changed and hui-root is not found
+     */
+    async _persistLabelsToLovelace(labels) {
+      const lovelace = this._getLovelace();
+      if (!lovelace || lovelace.mode !== "storage" || typeof lovelace.saveConfig !== "function") {
+        return false;
+      }
+      const target = JSON.stringify(this._rawConfig ?? {});
+      const cloned = JSON.parse(JSON.stringify(lovelace.config));
+      const matches = [];
+      this._collectCardConfigs(cloned, matches);
+      const found = matches.filter(card => JSON.stringify(card) === target);
+      if (found.length !== 1) {
+        console.warn(`tplink-switch-card: found ${found.length} matching card config(s); falling back to local label storage`);
+        return false;
+      }
+      if (Object.keys(labels).length > 0) {
+        found[0].port_labels = labels;
+      } else {
+        delete found[0].port_labels;
+      }
+      await lovelace.saveConfig(cloned);
+      return true;
+    }
+
+    async _saveLabel(port, rawValue) {
+      const value = String(rawValue ?? "").trim().slice(0, MAX_LABEL_LENGTH);
+      if (value === this._effectiveLabel(port)) {
+        this._labelDrafts.delete(port);
+        this.render();
+        return;
+      }
+
+      // Full desired label set = config labels + local overrides + this change
+      const merged = { ...this.config.port_labels };
+      const local = this._localLabels();
+      Object.entries(local).forEach(([p, v]) => {
+        if (v) merged[p] = v; else delete merged[p];
+      });
+      if (value) merged[port] = value; else delete merged[port];
+
+      this._savingLabel.add(port);
+      this.render();
+
+      let saved = false;
+      try {
+        saved = await this._persistLabelsToLovelace(merged);
+      } catch (err) {
+        console.warn("tplink-switch-card: saving label to dashboard failed", err);
+      }
+
+      this._savingLabel.delete(port);
+      this._labelDrafts.delete(port);
+
+      if (saved) {
+        // Dashboard config now holds every label — local overrides are obsolete
+        this._writeLocalLabels({});
+        this.config.port_labels = merged; // instant UI update; setConfig follows from HA
+      } else {
+        const updatedLocal = { ...this._localLabels() };
+        if (value) {
+          updatedLocal[port] = value;
+        } else if (this.config.port_labels?.[port]) {
+          updatedLocal[port] = ""; // override config label with "removed"
+        } else {
+          delete updatedLocal[port];
+        }
+        this._writeLocalLabels(updatedLocal);
+      }
+      this.render();
     }
 
     // ── Service calls ─────────────────────────────────────────────────────────
@@ -286,6 +457,7 @@
         this._expanded.delete(port);
         this._configuring.delete(port);
         this._pendingPoe.delete(port);
+        this._labelDrafts.delete(port);
       } else {
         this._expanded.add(port);
       }
@@ -313,6 +485,7 @@
     // ── CSS ───────────────────────────────────────────────────────────────────
 
     _css() {
+      const fs = v => this._fs(v);
       return `
         :host { display: block; }
         * { box-sizing: border-box; }
@@ -330,10 +503,10 @@
           display: flex; align-items: center;
           justify-content: space-between; margin-bottom: 0.9rem;
         }
-        .card-title { font-size: 1.05rem; font-weight: 700; }
+        .card-title { font-size: ${fs(1.1)}; font-weight: 700; }
         .summary-pills { display: flex; gap: 0.4rem; flex-wrap: wrap; }
         .pill {
-          font-size: 0.62rem; font-weight: 700;
+          font-size: ${fs(0.7)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.07em;
           padding: 0.18rem 0.55rem; border-radius: 999px;
           background: var(--secondary-background-color);
@@ -387,12 +560,12 @@
           display: flex; flex-direction: column; gap: 0.12rem;
         }
         .ov-label {
-          font-size: 0.56rem; font-weight: 700;
+          font-size: ${fs(0.64)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.08em;
           color: var(--secondary-text-color);
         }
         .ov-value {
-          font-size: 0.82rem; font-weight: 600;
+          font-size: ${fs(0.9)}; font-weight: 600;
           color: var(--primary-text-color);
           font-variant-numeric: tabular-nums;
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -451,7 +624,7 @@
           margin-top: 0.45rem; flex-wrap: wrap;
         }
         .limit-input {
-          width: 5rem; font-size: 0.78rem;
+          width: 5rem; font-size: ${fs(0.85)};
           padding: 0.2rem 0.4rem; border-radius: 5px;
           border: 1px solid var(--primary-color, #03a9f4);
           background: var(--secondary-background-color);
@@ -459,11 +632,11 @@
           font-variant-numeric: tabular-nums;
         }
         .limit-input:focus { outline: none; border-color: var(--primary-color); }
-        .limit-unit { font-size: 0.72rem; color: var(--secondary-text-color); }
+        .limit-unit { font-size: ${fs(0.78)}; color: var(--secondary-text-color); }
         .edit-pencil {
           background: none; border: none; cursor: pointer;
           color: var(--secondary-text-color); padding: 0 0.2rem;
-          font-size: 0.75rem; line-height: 1;
+          font-size: ${fs(0.8)}; line-height: 1;
           transition: color 0.15s ease;
         }
         .edit-pencil:hover { color: var(--primary-color); }
@@ -477,11 +650,11 @@
           border-bottom: 1px solid var(--divider-color, rgba(128,128,128,0.14));
         }
         .section-label {
-          font-size: 0.63rem; font-weight: 700;
+          font-size: ${fs(0.7)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.1em;
           color: var(--secondary-text-color); flex: 1;
         }
-        .section-stat { font-size: 0.63rem; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
+        .section-stat { font-size: ${fs(0.7)}; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
         .section-stat span { color: var(--primary-color, #03a9f4); font-weight: 600; }
 
         /* ── Port table ── */
@@ -495,8 +668,8 @@
         .port-row:last-child td { border-bottom: none; }
 
         .port-num {
-          font-size: 0.7rem; font-weight: 700; font-variant-numeric: tabular-nums;
-          color: var(--secondary-text-color); width: 1.8rem; text-align: center;
+          font-size: ${fs(0.8)}; font-weight: 700; font-variant-numeric: tabular-nums;
+          color: var(--secondary-text-color); width: 2rem; text-align: center;
         }
         .port-num.up { color: #2e8f57; }
 
@@ -508,18 +681,18 @@
 
         .port-info-cell { width: 100%; }
         .port-info { display: flex; align-items: center; gap: 0.4rem; }
-        .port-speed { font-size: 0.65rem; color: var(--secondary-text-color); white-space: nowrap; }
+        .port-speed { font-size: ${fs(0.75)}; color: var(--secondary-text-color); white-space: nowrap; }
         .port-speed.active { color: #2e8f57; }
         .port-label {
           min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-          font-size: 0.68rem; font-weight: 500; color: var(--primary-text-color);
+          font-size: ${fs(0.8)}; font-weight: 500; color: var(--primary-text-color);
         }
         .port-label::before {
           content: "·"; margin-right: 0.4rem; color: var(--secondary-text-color);
         }
 
         .poe-badge {
-          font-size: 0.58rem; font-weight: 700;
+          font-size: ${fs(0.66)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.05em;
           padding: 0.1rem 0.38rem; border-radius: 999px; white-space: nowrap;
           background: rgba(128,128,128,0.1); color: var(--secondary-text-color);
@@ -531,7 +704,7 @@
         }
 
         .port-watt {
-          font-size: 0.72rem; font-variant-numeric: tabular-nums;
+          font-size: ${fs(0.8)}; font-variant-numeric: tabular-nums;
           color: var(--primary-color, #03a9f4); font-weight: 600;
           white-space: nowrap; min-width: 3.2rem;
           text-align: right; padding-right: 0.35rem;
@@ -559,17 +732,30 @@
         }
         .d-item { display: flex; flex-direction: column; gap: 0.12rem; min-width: 70px; }
         .d-label {
-          font-size: 0.56rem; text-transform: uppercase;
+          font-size: ${fs(0.64)}; text-transform: uppercase;
           letter-spacing: 0.08em; color: var(--secondary-text-color); font-weight: 700;
         }
-        .d-value { font-size: 0.78rem; color: var(--primary-text-color); font-weight: 500; font-variant-numeric: tabular-nums; }
+        .d-value { font-size: ${fs(0.86)}; color: var(--primary-text-color); font-weight: 500; font-variant-numeric: tabular-nums; }
         .d-value.poe  { color: var(--primary-color, #03a9f4); }
         .d-value.good { color: #2e8f57; }
         .d-value.muted { color: var(--secondary-text-color); }
 
+        /* Label editor */
+        .label-edit-row { display: flex; align-items: center; gap: 0.35rem; }
+        .label-input {
+          width: 9.5rem; max-width: 40vw;
+          font-size: ${fs(0.85)}; font-family: inherit;
+          padding: 0.22rem 0.45rem; border-radius: 5px;
+          border: 1px solid var(--divider-color, rgba(128,128,128,0.3));
+          background: var(--ha-card-background, var(--card-background-color));
+          color: var(--primary-text-color);
+        }
+        .label-input:focus { outline: none; border-color: var(--primary-color, #03a9f4); }
+        .label-input::placeholder { color: var(--secondary-text-color); opacity: 0.7; }
+
         /* Configure button */
         .btn-configure {
-          font-size: 0.68rem; font-weight: 600;
+          font-size: ${fs(0.76)}; font-weight: 600;
           padding: 0.22rem 0.65rem; border-radius: 999px;
           border: 1px solid rgba(3,169,244,0.4);
           background: rgba(3,169,244,0.07);
@@ -593,7 +779,7 @@
           display: flex; flex-direction: column; gap: 0.6rem;
         }
         .configure-title {
-          font-size: 0.62rem; font-weight: 700;
+          font-size: ${fs(0.7)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.09em;
           color: var(--primary-color, #03a9f4);
         }
@@ -602,12 +788,12 @@
         }
         .cfg-field { display: flex; flex-direction: column; gap: 0.22rem; }
         .cfg-label {
-          font-size: 0.56rem; font-weight: 700;
+          font-size: ${fs(0.64)}; font-weight: 700;
           text-transform: uppercase; letter-spacing: 0.08em;
           color: var(--secondary-text-color);
         }
         .cfg-select {
-          font-size: 0.78rem; font-family: inherit;
+          font-size: ${fs(0.86)}; font-family: inherit;
           padding: 0.25rem 0.5rem; border-radius: 6px;
           border: 1px solid var(--divider-color, rgba(128,128,128,0.3));
           background: var(--ha-card-background, var(--card-background-color));
@@ -617,7 +803,7 @@
         .cfg-select:focus { outline: none; border-color: var(--primary-color); }
         .configure-actions { display: flex; gap: 0.5rem; }
         .btn-apply {
-          font-size: 0.72rem; font-weight: 600;
+          font-size: ${fs(0.8)}; font-weight: 600;
           padding: 0.25rem 0.8rem; border-radius: 999px;
           border: none; background: var(--primary-color, #03a9f4);
           color: #fff; cursor: pointer;
@@ -626,7 +812,7 @@
         .btn-apply:hover { opacity: 0.85; }
         .btn-apply:disabled { opacity: 0.45; cursor: not-allowed; }
         .btn-cancel {
-          font-size: 0.72rem; font-weight: 600;
+          font-size: ${fs(0.8)}; font-weight: 600;
           padding: 0.25rem 0.8rem; border-radius: 999px;
           border: 1px solid var(--divider-color, rgba(128,128,128,0.3));
           background: transparent; color: var(--secondary-text-color);
@@ -635,7 +821,7 @@
         .btn-cancel:hover { border-color: var(--primary-text-color); color: var(--primary-text-color); }
 
         ha-switch { --mdc-switch-track-height: 14px; }
-        .placeholder { padding: 1rem; color: var(--secondary-text-color); font-size: 0.9rem; }
+        .placeholder { padding: 1rem; color: var(--secondary-text-color); font-size: ${fs(0.9)}; }
       `;
     }
 
@@ -691,7 +877,7 @@
             min="1" max="${maxPoeW || 1000}" step="0.5">
           <span class="limit-unit">W</span>
           ${maxPoeW ? `<span class="limit-unit" style="color:var(--secondary-text-color)">max ${maxPoeW} W</span>` : ""}
-          <span class="limit-error" id="poe-limit-error" style="display:none;color:#c22040;font-size:0.65rem"></span>
+          <span class="limit-error" id="poe-limit-error" style="display:none;color:#c22040;font-size:${this._fs(0.72)}"></span>
           <button class="btn-apply" id="poe-limit-apply" ${this._applyingLimit ? "disabled" : ""}>
             ${this._applyingLimit ? "Applying…" : "Set"}
           </button>
@@ -719,7 +905,7 @@
             return `
               <div class="ov-item copyable" data-copy="${mac}">
                 <div class="ov-label">MAC</div>
-                <div class="ov-value" style="font-size:0.68rem;letter-spacing:0.02em">${mac}</div>
+                <div class="ov-value" style="font-size:${this._fs(0.76)};letter-spacing:0.02em">${mac}</div>
               </div>`;
 
           case "gateway":
@@ -787,7 +973,7 @@
       const watts = hasPoe ? (parseFloat(ent.poeState?.attributes?.power_w ?? 0) || 0) : 0;
       const speed       = ent.state?.attributes?.speed ?? null;
       const speedConfig = ent.state?.attributes?.speed_config ?? null;
-      const portLabel   = this.config.port_labels?.[port] ?? "";
+      const portLabel   = this._effectiveLabel(port);
       const safeLabel   = portLabel ? this._escapeHtml(portLabel) : "";
 
       const pfx         = this.config.entity_prefix;
@@ -795,13 +981,14 @@
       const portEnabledId = ent.portEnabled ? `switch.${pfx}_port_${port}_enabled` : null;
 
       const hasToggles  = !!(poeEnabledId || portEnabledId);
-      const expanded    = hasToggles && this._expanded.has(port);
+      const canExpand   = hasToggles || this.config.editable_labels;
+      const expanded    = canExpand && this._expanded.has(port);
       const configuring = this._configuring.has(port);
       const applying    = this._applying.has(port);
 
       const mainRow = `
-        <tr class="port-row${hasToggles ? " expandable" : ""}" data-port="${port}"
-          ${hasToggles ? `role="button" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
+        <tr class="port-row${canExpand ? " expandable" : ""}" data-port="${port}"
+          ${canExpand ? `role="button" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
           <td class="port-num ${isUp ? "up" : ""}">P${port}</td>
           <td class="port-info-cell">
             <div class="port-info">
@@ -812,7 +999,7 @@
             </div>
           </td>
           <td class="port-watt ${!hasPoe || watts === 0 ? "zero" : ""}">${hasPoe && watts > 0 ? watts.toFixed(1) + " W" : hasPoe ? "—" : ""}</td>
-          <td class="chevron-cell">${hasToggles ? `<span class="chevron ${expanded ? "open" : ""}"></span>` : ""}</td>
+          <td class="chevron-cell">${canExpand ? `<span class="chevron ${expanded ? "open" : ""}"></span>` : ""}</td>
         </tr>`;
 
       if (!expanded) return mainRow;
@@ -820,7 +1007,23 @@
       const attr    = ent.poeState?.attributes ?? {};
       const pending = this._pendingPoe.get(port) ?? {};
 
-      // Detail row — read-only values + toggles + Configure button
+      // Inline label editor — draft survives re-renders triggered by entity updates
+      const savingLabel = this._savingLabel.has(port);
+      const draft       = this._labelDrafts.get(port);
+      const labelEditor = this.config.editable_labels ? `
+        <div class="d-item">
+          <div class="d-label">Label</div>
+          <div class="label-edit-row">
+            <input class="label-input" type="text" maxlength="${MAX_LABEL_LENGTH}"
+              placeholder="Port name" data-label-port="${port}"
+              value="${this._escapeHtml(draft ?? portLabel)}">
+            <button class="btn-apply" data-label-save="${port}" ${savingLabel ? "disabled" : ""}>
+              ${savingLabel ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>` : "";
+
+      // Detail row — read-only values + toggles + label editor + Configure button
       const detailRow = `
         <tr class="detail-row">
           <td colspan="4">
@@ -837,6 +1040,7 @@
               ${hasPoe && attr.power_limit ? `<div class="d-item"><div class="d-label">Limit</div><div class="d-value">${attr.power_limit}</div></div>` : ""}
               ${poeEnabledId  ? `<div class="d-item"><div class="d-label">PoE enabled</div>${this._renderToggle(poeEnabledId)}</div>`  : ""}
               ${portEnabledId ? `<div class="d-item"><div class="d-label">Port enabled</div>${this._renderToggle(portEnabledId)}</div>` : ""}
+              ${labelEditor}
               ${hasPoe ? `<button class="btn-configure" data-configure="${port}" ${applying ? "disabled" : ""}>
                 ${applying ? "Applying…" : "Configure PoE"}
               </button>` : ""}
@@ -892,6 +1096,7 @@
       }
 
       this._portEntitiesCache.clear();
+      this._localLabelsCache = null;
 
       const hasPoe       = this.config.has_poe;
       const poePorts     = hasPoe ? Array.from({ length: this.config.poe_ports }, (_, i) => i + 1) : [];
@@ -968,7 +1173,7 @@
       // Port row expand/collapse
       this.querySelectorAll(".port-row.expandable").forEach(row => {
         row.addEventListener("click", e => {
-          if (e.target.closest("ha-switch, button, select")) return;
+          if (e.target.closest("ha-switch, button, select, input, a")) return;
           this._toggleExpand(parseInt(row.dataset.port));
         });
       });
@@ -1011,6 +1216,31 @@
         btn.addEventListener("click", e => {
           e.stopPropagation();
           this._cancelConfigure(parseInt(btn.dataset.cancelPort));
+        });
+      });
+
+      // Label editor — input keeps a draft (no re-render), Enter or Save persists
+      this.querySelectorAll(".label-input[data-label-port]").forEach(inp => {
+        const port = parseInt(inp.dataset.labelPort);
+        inp.addEventListener("click", e => e.stopPropagation());
+        inp.addEventListener("input", () => {
+          this._labelDrafts.set(port, inp.value);
+        });
+        inp.addEventListener("keydown", e => {
+          e.stopPropagation();
+          if (e.key === "Enter") this._saveLabel(port, inp.value);
+          if (e.key === "Escape") {
+            this._labelDrafts.delete(port);
+            this.render();
+          }
+        });
+      });
+      this.querySelectorAll("[data-label-save]").forEach(btn => {
+        btn.addEventListener("click", e => {
+          e.stopPropagation();
+          const port = parseInt(btn.dataset.labelSave);
+          const inp  = this.querySelector(`.label-input[data-label-port="${port}"]`);
+          this._saveLabel(port, inp?.value ?? "");
         });
       });
 
