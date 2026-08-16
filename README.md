@@ -30,6 +30,8 @@ overview_fields:                  # optional: visible fields and their order
   - poe_remaining
   - poe_budget
 show_switch_link: true            # show web UI shortcut beside the IP address
+font_scale: 1                    # optional: scale all card text, e.g. 1.2 = 20% larger
+editable_labels: true            # allow editing port labels directly in the card
 port_labels:                     # optional labels; omitted ports stay unlabeled
   1: Router
   3: Office PC
@@ -75,6 +77,8 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **PoE budget bar** — turns amber above 80% and red above 95% load; click ✏️ to edit the budget limit inline
 - **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
 - **Optional port labels** — add readable names to selected ports without configuring every port
+- **Inline label editing** — rename ports directly in the expanded row; saved to the dashboard config on storage-mode dashboards, localStorage fallback otherwise
+- **Adjustable font size** — larger defaults, plus `font_scale` to fine-tune all card text
 - **Per-port status** — link state dot, formatted link speed (1G / 100M / 2.5G), PoE badge and wattage
 - **Expandable detail rows** — click a port to reveal voltage, current, PD class, configured speed, priority, power limit and enable toggles
 - **PoE configuration panel** — configure PoE priority and power limit per port with Apply/Cancel directly in the card
@@ -121,7 +125,7 @@ The card has three interaction levels:
 
 **1. Port row** — always visible. Shows link state, speed, PoE badge and wattage at a glance.
 
-**2. Detail row** — click any port that has controllable entities to expand. Shows all sensor values (voltage, current, PD class, configured speed) plus PoE enabled and port enabled toggles.
+**2. Detail row** — click a port to expand. Shows all sensor values (voltage, current, PD class, configured speed), PoE enabled and port enabled toggles, and a **Label** field to rename the port.
 
 ![](screenshots/port_detail.png)
 
@@ -129,7 +133,7 @@ The card has three interaction levels:
 
 ![](screenshots/configure_panel.png)
 
-> Ports without any controllable entities (no `poe_enabled` or `port_enabled` switch) are not expandable — they show status only.
+> With `editable_labels: true` (the default), every port row is expandable. When label editing is disabled, ports without any controllable entities (no `poe_enabled` or `port_enabled` switch) are not expandable — they show status only.
 
 ---
 
@@ -148,6 +152,8 @@ The card has three interaction levels:
 | `overview_layout` | No | `tiles` | Overview design: `tiles`, `compact`, or `hidden` |
 | `overview_fields` | No | all fields | Ordered list of visible overview fields. An empty list hides the overview |
 | `show_switch_link` | No | `true` | Show the switch web-interface shortcut beside the IP address |
+| `font_scale` | No | `1` | Multiplies every font size in the card. `1.2` = 20 % larger. Clamped to 0.7–2 |
+| `editable_labels` | No | `true` | Allow editing port labels directly in the expanded port row. Set to `false` to make labels read-only |
 | `port_labels` | No | `{}` | Optional mapping of port numbers to labels. Ports not listed remain unlabeled |
 
 ### Port labels
@@ -164,6 +170,17 @@ port_labels:
 ```
 
 Port numbers may be omitted between entries and do not need to be sorted. Empty labels, invalid port numbers and ports above `total_ports` are ignored. Long labels are shortened visually in the row; hovering shows the complete text.
+
+### Editing labels in the card
+
+Click a port row to expand it and use the **Label** field to name the port — press **Enter** or click **Save**. Clearing the field removes the label, and **Escape** cancels editing.
+
+How the label is stored:
+
+- On **storage-mode dashboards** (the default UI-managed dashboards), the card writes the label back into its own `port_labels` config via the Lovelace API, so the change syncs to all devices and browsers.
+- On **YAML-mode dashboards**, or if the card cannot be uniquely located in the dashboard config (e.g. two identical cards), it falls back to `localStorage` — the label then only exists in the browser where it was entered, and a warning is logged to the console.
+
+Set `editable_labels: false` to hide the label editor and manage labels via YAML only.
 
 ### Overview options
 
@@ -263,7 +280,7 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ### Expanded port detail
 ![Expanded port detail row](screenshots/port_detail.png)
-*Expand a port to see all sensor values, configured speed and enable toggles.*
+*Expand a port to see all sensor values, configured speed, enable toggles and the label editor.*
 
 ### PoE configure panel
 ![PoE configure panel with priority and power limit dropdowns](screenshots/configure_panel.png)
@@ -285,7 +302,9 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 | --- | --- |
 | Card not found | Verify the resource URL is registered and hard-refresh the browser |
 | All ports show "Down" | Check that `entity_prefix` matches the prefix your integration uses — look up one entity in Developer Tools → States to confirm |
-| Ports are not expandable | The port has no `switch.*_poe_enabled` or `switch.*_enabled` entity — check the integration has created them; some switch models don't support all features |
+| Ports are not expandable | Only happens with `editable_labels: false` — the port has no `switch.*_poe_enabled` or `switch.*_enabled` entity; check the integration has created them |
+| Label only shows on one device | The card fell back to localStorage — check the console for a warning. Happens on YAML-mode dashboards or when two cards have identical configs. Give the cards different titles, or manage labels via `port_labels` in YAML |
+| Text too small or too large | Adjust `font_scale`, e.g. `font_scale: 1.3` |
 | Configure PoE button missing | Only shown on PoE ports (ports 1–`poe_ports`) that have a `poe_state` entity |
 | PoE Apply fails | Check that `mac_address` is available on `sensor.{prefix}_network_info` — open the entity in Developer Tools → States and look for the `mac` attribute |
 | Copy doesn't work | On HTTP installs `navigator.clipboard` is blocked by the browser; the card falls back to `execCommand` automatically — if that also fails, switch HA to HTTPS |
@@ -306,6 +325,20 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
+
+### 1.2.0
+
+**Larger, scalable fonts** (#8)
+- All base font sizes increased ~15 %
+- New `font_scale` option (default `1`, clamped 0.7–2) multiplies every font size in the card
+
+**Inline port label editing** (#8)
+- New **Label** field in the expanded port row — save with Enter or the Save button, clear to remove
+- Labels persist into the card's `port_labels` config via `lovelace.saveConfig` on storage-mode dashboards (syncs everywhere)
+- Automatic `localStorage` fallback for YAML-mode dashboards or when the card can't be uniquely identified
+- All port rows are now expandable when `editable_labels` is enabled (default); disable with `editable_labels: false`
+- Drafts survive re-renders caused by entity updates; Escape cancels editing
+
 ### 1.1.0
 
 **Port labels**
