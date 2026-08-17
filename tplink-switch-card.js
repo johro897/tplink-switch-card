@@ -38,6 +38,15 @@
   const DEFAULT_OVERVIEW_FIELDS = Object.freeze([
     "ip", "mac", "gateway", "netmask", "poe_used", "poe_remaining", "poe_budget",
   ]);
+  const OVERVIEW_FIELD_LABELS = Object.freeze({
+    ip: "IP address",
+    mac: "MAC address",
+    gateway: "Gateway",
+    netmask: "Netmask",
+    poe_used: "PoE used",
+    poe_remaining: "PoE remaining",
+    poe_budget: "PoE budget bar",
+  });
   const OVERVIEW_FIELD_SET = new Set(DEFAULT_OVERVIEW_FIELDS);
   const OVERVIEW_LAYOUTS = new Set(["tiles", "compact", "hidden"]);
   const MAX_LABEL_LENGTH = 40;
@@ -125,6 +134,15 @@
     }
 
     connectedCallback() { this.render(); }
+
+    static getConfigElement() {
+      return document.createElement(`${CARD_NAME}-editor`);
+    }
+
+    static getStubConfig() {
+      return { type: `custom:${CARD_NAME}`, entity_prefix: "tp_link_switch" };
+    }
+
     getCardSize() {
       const baseSize = this.config?.has_poe === false ? 5 : 7;
       const overviewHidden = this.config?.overview_layout === "hidden" ||
@@ -1299,4 +1317,116 @@
   }
 
   customElements.define(CARD_NAME, TplinkSwitchCard);
+
+  // ── Visual editor ──────────────────────────────────────────────────────────
+  //
+  // Built on ha-form (Home Assistant's built-in schema-driven form component,
+  // globally available in the frontend — same pattern already relied on for
+  // ha-switch elsewhere in this file). port_labels is deliberately NOT exposed
+  // here: it already has a better, WYSIWYG editing flow directly in the card
+  // itself (click a port row → Label field), so duplicating it as a form list
+  // would be redundant and worse UX. overview_fields is a simple multi-select
+  // (fixed order) rather than a reorderable list — full drag-reordering isn't
+  // worth the complexity for a card editor.
+
+  class TplinkSwitchCardEditor extends HTMLElement {
+    setConfig(config) {
+      this._config = config;
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this._render();
+    }
+
+    connectedCallback() {
+      this._render();
+    }
+
+    // Suggests entity prefixes actually present in this HA instance, since a
+    // mismatched entity_prefix (the #1 setup mistake) silently shows no data.
+    _entityPrefixSelector() {
+      const suffix = "_network_info";
+      const states = this._hass?.states ?? {};
+      const prefixes = Object.keys(states)
+        .filter(id => id.startsWith("sensor.") && id.endsWith(suffix))
+        .map(id => id.slice("sensor.".length, -suffix.length));
+      if (!prefixes.length) return { text: {} };
+      return { select: { mode: "dropdown", custom_value: true, options: [...new Set(prefixes)] } };
+    }
+
+    _schema() {
+      const hasPoe = this._config?.has_poe !== false;
+      const schema = [
+        { name: "title", selector: { text: {} } },
+        { name: "entity_prefix", selector: this._entityPrefixSelector() },
+        { name: "has_poe", selector: { boolean: {} } },
+      ];
+      if (hasPoe) {
+        schema.push(
+          { name: "poe_ports", selector: { number: { min: 0, max: 48, mode: "box" } } },
+          { name: "max_poe_watts", selector: { number: { min: 0, mode: "box" } } },
+        );
+      }
+      schema.push(
+        { name: "total_ports", selector: { number: { min: 1, max: 48, mode: "box" } } },
+        { name: "overview_layout", selector: { select: { mode: "dropdown", options: [
+          { value: "tiles", label: "Tiles" },
+          { value: "compact", label: "Compact" },
+          { value: "hidden", label: "Hidden" },
+        ] } } },
+        { name: "overview_fields", selector: { select: {
+          multiple: true,
+          mode: "list",
+          options: DEFAULT_OVERVIEW_FIELDS.map(f => ({ value: f, label: OVERVIEW_FIELD_LABELS[f] })),
+        } } },
+        { name: "show_switch_link", selector: { boolean: {} } },
+        { name: "font_scale", selector: { number: { min: 0.7, max: 2, step: 0.1, mode: "slider" } } },
+        { name: "editable_labels", selector: { boolean: {} } },
+      );
+      return schema;
+    }
+
+    _computeLabel(schema) {
+      const labels = {
+        title: "Title",
+        entity_prefix: "Entity prefix",
+        has_poe: "Switch has PoE",
+        poe_ports: "Number of PoE ports",
+        max_poe_watts: "Hardware PoE max (W)",
+        total_ports: "Total ports",
+        overview_layout: "Overview layout",
+        overview_fields: "Overview fields",
+        show_switch_link: "Show switch web-UI link",
+        font_scale: "Font scale",
+        editable_labels: "Allow inline label editing",
+      };
+      return labels[schema.name] ?? schema.name;
+    }
+
+    _render() {
+      if (!this._config || !this._hass) return;
+      let form = this.querySelector("ha-form");
+      if (!form) {
+        form = document.createElement("ha-form");
+        form.addEventListener("value-changed", e => {
+          e.stopPropagation();
+          this.dispatchEvent(new CustomEvent("config-changed", {
+            detail: { config: e.detail.value },
+            bubbles: true,
+            composed: true,
+          }));
+        });
+        this.innerHTML = "";
+        this.appendChild(form);
+      }
+      form.hass = this._hass;
+      form.data = this._config;
+      form.schema = this._schema();
+      form.computeLabel = this._computeLabel;
+    }
+  }
+
+  customElements.define(`${CARD_NAME}-editor`, TplinkSwitchCardEditor);
 })();

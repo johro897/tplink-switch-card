@@ -73,6 +73,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 
 ## Features
 
+- **Visual editor** — configure the card through Home Assistant's UI editor, no YAML required for setup
 - **Configurable switch overview** — choose visible fields and their order; use tile, compact or hidden layout
 - **PoE budget bar** — turns amber above 80% and red above 95% load; click ✏️ to edit the budget limit inline
 - **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
@@ -138,6 +139,11 @@ The card has three interaction levels:
 ---
 
 ## Configuration
+
+Add the card via **Edit Dashboard → Add Card → TP-Link Switch Card** and configure it in the visual editor, or use YAML for full control. The editor covers every option below except `port_labels`, which you set directly in the card instead — see [Editing labels in the card](#editing-labels-in-the-card).
+
+> [!NOTE]
+> `entity_prefix` in the editor suggests prefixes actually found on your instance (scanned from `sensor.*_network_info` entities), so a mismatch — the most common setup mistake — is easy to spot. You can still type a custom value if your entities haven't loaded yet.
 
 ### Card options
 
@@ -325,6 +331,13 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
+
+### 1.3.0
+
+**Visual editor** (#5)
+- Configure the card through Home Assistant's UI — no YAML needed for initial setup
+- Built on `ha-form`; covers every card option except `port_labels`, which is edited live in the card itself
+- `entity_prefix` suggests prefixes found on your instance instead of requiring exact manual entry
 
 ### 1.2.0
 
