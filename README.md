@@ -75,7 +75,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 
 - **Visual editor** — configure the card through Home Assistant's UI editor, no YAML required for setup
 - **Configurable switch overview** — choose visible fields and their order; use tile, compact or hidden layout
-- **PoE budget bar** — turns amber above 80% and red above 95% load; click ✏️ to edit the budget limit inline
+- **PoE budget bar** — always shows the switch's actual current budget, read live from its own sensor; click ✏️ to change it — this sends a real command to the switch, it's not just a display value
 - **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
 - **Optional port labels** — add readable names to selected ports without configuring every port
 - **Inline label editing** — rename ports directly in the expanded row; saved to the dashboard config on storage-mode dashboards, localStorage fallback otherwise
@@ -85,7 +85,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **PoE configuration panel** — configure PoE priority and power limit per port with Apply/Cancel directly in the card
 - **Click to copy** — click the IP address or MAC tile to copy the value to clipboard; works on both HTTP and HTTPS
 - **Switch UI shortcut** — link icon next to IP opens the switch web UI in a new tab; derived automatically from the integration, no URL to configure
-- **PoE hardware cap** — optional `max_poe_watts` shows the physical limit in the budget editor and blocks Apply if exceeded
+- **PoE hardware cap** — optional `max_poe_watts` stops you from entering a value above your switch's physical limit in the budget editor; it's a safety cap on the *input*, not the value shown in the budget bar
 - **Theme-aware** — uses HA CSS variables throughout, works with any theme
 - **Efficient rendering** — only re-renders when a watched entity actually changes state or attribute
 
@@ -154,7 +154,7 @@ Add the card via **Edit Dashboard → Add Card → TP-Link Switch Card** and con
 | `has_poe` | No | `true` | Set to `false` for switches without PoE. Hides all PoE UI and stops watching PoE entities |
 | `poe_ports` | No | `8` | Number of PoE-capable ports, counted from port 1. Ignored when `has_poe` is `false` |
 | `total_ports` | No | `16` | Total number of switch ports |
-| `max_poe_watts` | No | — | Hardware PoE maximum in watts (e.g. `150` for TL-SG1016PE). Ignored when `has_poe` is `false` |
+| `max_poe_watts` | No | — | Client-side cap on the budget editor's input field — prevents entering a value above your switch's physical PoE maximum (e.g. `150` for TL-SG1016PE). Does **not** set or override the value shown in the budget bar, which always reflects the switch's own reported budget. Ignored when `has_poe` is `false` |
 | `overview_layout` | No | `tiles` | Overview design: `tiles`, `compact`, or `hidden` |
 | `overview_fields` | No | all fields | Ordered list of visible overview fields. An empty list hides the overview |
 | `show_switch_link` | No | `true` | Show the switch web-interface shortcut beside the IP address |
@@ -247,6 +247,9 @@ The card calls two services from the `tplink_easy_smart` integration. Both ident
 **Priority values:** `Low`, `Middle`, `High`
 
 **Power limit values:** `Auto`, `Class 1`, `Class 2`, `Class 3`, `Class 4`, `Manual`
+
+> [!IMPORTANT]
+> Both are real writes to the switch, not local or card-side settings. In particular, the PoE budget bar's ✏️ editor calls `set_general_poe_limit` directly — the number shown in the bar is always read live from the switch's own `power_limit_w` attribute, never from `max_poe_watts` or anything else in the card's YAML. Lowering the budget below what your connected PoE devices are currently drawing can cut their power.
 
 ---
 
