@@ -906,11 +906,11 @@
         switch (field) {
           case "ip":
             return `
-              <div class="ov-item copyable" data-copy="${ip}">
+              <div class="ov-item copyable" data-copy="${this._escapeHtml(ip)}">
                 <div class="ov-label">IP address</div>
                 <div class="ov-value-row">
-                  <div class="ov-value" style="flex:1">${ip}</div>
-                  ${switchUrl ? `<a class="ui-link" href="${switchUrl}" target="_blank" rel="noreferrer" title="Open switch UI">
+                  <div class="ov-value" style="flex:1">${this._escapeHtml(ip)}</div>
+                  ${switchUrl ? `<a class="ui-link" href="${this._escapeHtml(switchUrl)}" target="_blank" rel="noreferrer" title="Open switch UI">
                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                       <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -921,23 +921,23 @@
 
           case "mac":
             return `
-              <div class="ov-item copyable" data-copy="${mac}">
+              <div class="ov-item copyable" data-copy="${this._escapeHtml(mac)}">
                 <div class="ov-label">MAC</div>
-                <div class="ov-value" style="font-size:${this._fs(0.76)};letter-spacing:0.02em">${mac}</div>
+                <div class="ov-value" style="font-size:${this._fs(0.76)};letter-spacing:0.02em">${this._escapeHtml(mac)}</div>
               </div>`;
 
           case "gateway":
             return `
               <div class="ov-item">
                 <div class="ov-label">Gateway</div>
-                <div class="ov-value">${gateway}</div>
+                <div class="ov-value">${this._escapeHtml(gateway)}</div>
               </div>`;
 
           case "netmask":
             return `
               <div class="ov-item">
                 <div class="ov-label">Netmask</div>
-                <div class="ov-value">${mask}</div>
+                <div class="ov-value">${this._escapeHtml(mask)}</div>
               </div>`;
 
           case "poe_used":

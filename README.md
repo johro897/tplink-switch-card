@@ -335,6 +335,10 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
+### 1.4.0
+**Security hardening** — [#11](https://github.com/johro897/tplink-switch-card/issues/11)
+- Network-info fields (IP, MAC, gateway, netmask) and the switch web-UI link are now HTML-escaped before being rendered — previously these were the one place in the card that skipped the escaping already used everywhere else (e.g. port labels), so a crafted value in the `network_info` sensor could have broken out of an HTML attribute
+
 ### 1.3.0
 
 **Visual editor** (#5)
