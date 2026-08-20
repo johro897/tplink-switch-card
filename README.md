@@ -335,9 +335,19 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
-### 1.4.0
+### 1.6.0
 **Security hardening** — [#11](https://github.com/johro897/tplink-switch-card/issues/11)
 - Network-info fields (IP, MAC, gateway, netmask) and the switch web-UI link are now HTML-escaped before being rendered — previously these were the one place in the card that skipped the escaping already used everywhere else (e.g. port labels), so a crafted value in the `network_info` sensor could have broken out of an HTML attribute
+
+**Performance** — [#12](https://github.com/johro897/tplink-switch-card/issues/12)
+- The list of entities the card watches for changes is now computed once per config change instead of being rebuilt from scratch (up to ~200 entity IDs on a large switch) on every single Home Assistant state update
+- The card's change-detection (`_statesChanged`) already existed before this release — this only removes the redundant rebuild of the list it checks against
+
+**Accessibility & theming** — [#13](https://github.com/johro897/tplink-switch-card/issues/13)
+- Status colors (up/PoE-good indicators, budget bar, header PoE pill) now use HA's `--success-color`/`--warning-color`/`--error-color` theme variables instead of fixed hex values
+- Expandable port rows are now keyboard-operable — reachable via Tab, expand/collapse with Enter or Space
+- PoE/port enable toggles now have an `aria-label` naming the port and action, not just relying on adjacent visual text
+- The header PoE pill now reflects load (turns amber past 80%, red past 95%), matching the budget bar's own thresholds — useful when `overview_layout: hidden`
 
 ### 1.3.0
 
