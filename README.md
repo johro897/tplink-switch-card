@@ -335,6 +335,13 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
+### 1.6.0
+**Accessibility & theming** — [#13](https://github.com/johro897/tplink-switch-card/issues/13)
+- Status colors (up/PoE-good indicators, budget bar, header PoE pill) now use HA's `--success-color`/`--warning-color`/`--error-color` theme variables instead of fixed hex values
+- Expandable port rows are now keyboard-operable — reachable via Tab, expand/collapse with Enter or Space
+- PoE/port enable toggles now have an `aria-label` naming the port and action, not just relying on adjacent visual text
+- The header PoE pill now reflects load (turns amber past 80%, red past 95%), matching the budget bar's own thresholds — useful when `overview_layout: hidden`
+
 ### 1.3.0
 
 **Visual editor** (#5)

@@ -423,7 +423,7 @@
       const el = this.querySelector("#poe-limit-error");
       const input = this.querySelector("#poe-limit-input");
       if (el) { el.textContent = msg; el.style.display = "inline"; }
-      if (input) input.style.borderColor = "#c22040";
+      if (input) input.style.borderColor = "var(--error-color, #c22040)";
     }
 
     _clearLimitError() {
@@ -532,7 +532,7 @@
           border: 1px solid var(--divider-color, rgba(128,128,128,0.2));
           white-space: nowrap;
         }
-        .pill.up  { background: rgba(46,143,87,0.13); color: #2e8f57; border-color: rgba(46,143,87,0.28); }
+        .pill.up  { background: rgba(46,143,87,0.13); color: var(--success-color, #2e8f57); border-color: rgba(46,143,87,0.28); }
         .pill.poe { background: rgba(3,169,244,0.1); color: var(--primary-color,#03a9f4); border-color: rgba(3,169,244,0.28); }
 
         /* ── Overview ── */
@@ -589,7 +589,7 @@
           overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .ov-value.poe    { color: var(--primary-color, #03a9f4); }
-        .ov-value.remain { color: #2e8f57; }
+        .ov-value.remain { color: var(--success-color, #2e8f57); }
 
         /* Copyable overview tiles */
         .ov-item.copyable { cursor: pointer; transition: border-color 0.15s ease; }
@@ -598,10 +598,10 @@
           content: " · click to copy";
           font-weight: 400; opacity: 0.7; text-transform: none; letter-spacing: 0;
         }
-        .ov-item.copied { border-color: #2e8f57 !important; }
+        .ov-item.copied { border-color: var(--success-color, #2e8f57) !important; }
         .ov-item.copied .ov-label::after {
           content: " · copied!";
-          color: #2e8f57; font-weight: 400; text-transform: none; letter-spacing: 0;
+          color: var(--success-color, #2e8f57); font-weight: 400; text-transform: none; letter-spacing: 0;
         }
 
         /* Switch UI link */
@@ -689,18 +689,18 @@
           font-size: ${fs(0.8)}; font-weight: 700; font-variant-numeric: tabular-nums;
           color: var(--secondary-text-color); width: 2rem; text-align: center;
         }
-        .port-num.up { color: #2e8f57; }
+        .port-num.up { color: var(--success-color, #2e8f57); }
 
         .link-dot {
           display: inline-block; width: 0.48rem; height: 0.48rem;
           border-radius: 50%; background: rgba(128,128,128,0.25); flex-shrink: 0;
         }
-        .link-dot.up { background: #2e8f57; box-shadow: 0 0 4px rgba(46,143,87,0.45); }
+        .link-dot.up { background: var(--success-color, #2e8f57); box-shadow: 0 0 4px rgba(46,143,87,0.45); }
 
         .port-info-cell { width: 100%; }
         .port-info { display: flex; align-items: center; gap: 0.4rem; }
         .port-speed { font-size: ${fs(0.75)}; color: var(--secondary-text-color); white-space: nowrap; }
-        .port-speed.active { color: #2e8f57; }
+        .port-speed.active { color: var(--success-color, #2e8f57); }
         .port-label {
           min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           font-size: ${fs(0.8)}; font-weight: 500; color: var(--primary-text-color);
@@ -755,7 +755,7 @@
         }
         .d-value { font-size: ${fs(0.86)}; color: var(--primary-text-color); font-weight: 500; font-variant-numeric: tabular-nums; }
         .d-value.poe  { color: var(--primary-color, #03a9f4); }
-        .d-value.good { color: #2e8f57; }
+        .d-value.good { color: var(--success-color, #2e8f57); }
         .d-value.muted { color: var(--secondary-text-color); }
 
         /* Label editor */
@@ -845,11 +845,11 @@
 
     // ── Render helpers ────────────────────────────────────────────────────────
 
-    _renderToggle(entityId) {
+    _renderToggle(entityId, ariaLabel) {
       if (!entityId) return `<span class="d-value muted">—</span>`;
       const e = this._hass?.states[entityId];
       if (!e)  return `<span class="d-value muted">—</span>`;
-      return `<ha-switch ${e.state === "on" ? "checked" : ""} data-entity="${entityId}"></ha-switch>`;
+      return `<ha-switch ${e.state === "on" ? "checked" : ""} data-entity="${entityId}" aria-label="${this._escapeHtml(ariaLabel || entityId)}"></ha-switch>`;
     }
 
     _fmtSpeed(raw) {
@@ -879,7 +879,7 @@
       const limitW   = parseFloat(poeS?.attributes?.power_limit_w ?? 0) || 0;
       const remainW  = parseFloat(poeS?.attributes?.power_remain_w ?? 0) || 0;
       const pct      = limitW > 0 ? Math.min(100, (consumed / limitW) * 100) : 0;
-      const barColor = pct > 95 ? "#c22040" : pct > 80 ? "#f4b942" : "var(--primary-color, #03a9f4)";
+      const barColor = pct > 95 ? "var(--error-color, #c22040)" : pct > 80 ? "var(--warning-color, #f4b942)" : "var(--primary-color, #03a9f4)";
 
       const ip        = netS?.state ?? "—";
       const mac       = netS?.attributes?.mac ?? "—";
@@ -895,7 +895,7 @@
             min="1" max="${maxPoeW || 1000}" step="0.5">
           <span class="limit-unit">W</span>
           ${maxPoeW ? `<span class="limit-unit" style="color:var(--secondary-text-color)">max ${maxPoeW} W</span>` : ""}
-          <span class="limit-error" id="poe-limit-error" style="display:none;color:#c22040;font-size:${this._fs(0.72)}"></span>
+          <span class="limit-error" id="poe-limit-error" style="display:none;color:var(--error-color, #c22040);font-size:${this._fs(0.72)}"></span>
           <button class="btn-apply" id="poe-limit-apply" ${this._applyingLimit ? "disabled" : ""}>
             ${this._applyingLimit ? "Applying…" : "Set"}
           </button>
@@ -1006,7 +1006,7 @@
 
       const mainRow = `
         <tr class="port-row${canExpand ? " expandable" : ""}" data-port="${port}"
-          ${canExpand ? `role="button" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
+          ${canExpand ? `role="button" tabindex="0" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
           <td class="port-num ${isUp ? "up" : ""}">P${port}</td>
           <td class="port-info-cell">
             <div class="port-info">
@@ -1056,8 +1056,8 @@
               ` : ""}
               ${hasPoe && attr.priority    ? `<div class="d-item"><div class="d-label">Priority</div><div class="d-value">${attr.priority}</div></div>` : ""}
               ${hasPoe && attr.power_limit ? `<div class="d-item"><div class="d-label">Limit</div><div class="d-value">${attr.power_limit}</div></div>` : ""}
-              ${poeEnabledId  ? `<div class="d-item"><div class="d-label">PoE enabled</div>${this._renderToggle(poeEnabledId)}</div>`  : ""}
-              ${portEnabledId ? `<div class="d-item"><div class="d-label">Port enabled</div>${this._renderToggle(portEnabledId)}</div>` : ""}
+              ${poeEnabledId  ? `<div class="d-item"><div class="d-label">PoE enabled</div>${this._renderToggle(poeEnabledId, `PoE enabled for port ${port}`)}</div>`  : ""}
+              ${portEnabledId ? `<div class="d-item"><div class="d-label">Port enabled</div>${this._renderToggle(portEnabledId, `Port ${port} enabled`)}</div>` : ""}
               ${labelEditor}
               ${hasPoe ? `<button class="btn-configure" data-configure="${port}" ${applying ? "disabled" : ""}>
                 ${applying ? "Applying…" : "Configure PoE"}
@@ -1130,6 +1130,12 @@
       const limitW     = hasPoe
         ? (parseFloat(this._e(`sensor.${pfx}_poe_consumption`)?.attributes?.power_limit_w ?? 0) || 0)
         : 0;
+      // Mirror the budget bar's own amber/red thresholds on the header pill,
+      // so overall load is visible at a glance even when overview_layout: hidden.
+      const headerPoePct   = limitW > 0 ? Math.min(100, (totalWatts / limitW) * 100) : 0;
+      const headerPoeColor = headerPoePct > 95 ? "var(--error-color, #c22040)"
+        : headerPoePct > 80 ? "var(--warning-color, #f4b942)"
+        : "var(--primary-color, #03a9f4)";
 
       this.innerHTML = `
         <div class="card">
@@ -1138,7 +1144,7 @@
             <div class="card-title">${this.config.title}</div>
             <div class="summary-pills">
               <div class="pill up">${portsUp} / ${this.config.total_ports} up</div>
-              ${hasPoe ? `<div class="pill poe">${poeActive} PoE · ${totalWatts.toFixed(1)} W</div>` : ""}
+              ${hasPoe ? `<div class="pill poe" style="color:${headerPoeColor}">${poeActive} PoE · ${totalWatts.toFixed(1)} W</div>` : ""}
             </div>
           </div>
 
@@ -1192,6 +1198,12 @@
       this.querySelectorAll(".port-row.expandable").forEach(row => {
         row.addEventListener("click", e => {
           if (e.target.closest("ha-switch, button, select, input, a")) return;
+          this._toggleExpand(parseInt(row.dataset.port));
+        });
+        row.addEventListener("keydown", e => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          if (e.target.closest("ha-switch, button, select, input, a")) return;
+          e.preventDefault();
           this._toggleExpand(parseInt(row.dataset.port));
         });
       });
