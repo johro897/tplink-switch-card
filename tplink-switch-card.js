@@ -123,6 +123,9 @@
       this.config.port_labels = portLabels;
 
       this._portEntitiesCache.clear();
+      // Only depends on entity_prefix/has_poe/total_ports/poe_ports, all fixed
+      // above — recompute once per config change instead of on every hass tick.
+      this._watchedEntitiesCache = this._watchedEntities();
       this.render();
     }
 
@@ -169,7 +172,8 @@
     }
 
     _statesChanged(oldHass, newHass) {
-      return this._watchedEntities().some(id => {
+      const ids = this._watchedEntitiesCache || this._watchedEntities();
+      return ids.some(id => {
         const o = oldHass.states[id];
         const n = newHass.states[id];
         if (o?.state !== n?.state) return true;

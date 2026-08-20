@@ -335,6 +335,11 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
+### 1.5.0
+**Performance** — [#12](https://github.com/johro897/tplink-switch-card/issues/12)
+- The list of entities the card watches for changes is now computed once per config change instead of being rebuilt from scratch (up to ~200 entity IDs on a large switch) on every single Home Assistant state update
+- The card's change-detection (`_statesChanged`) already existed before this release — this only removes the redundant rebuild of the list it checks against
+
 ### 1.3.0
 
 **Visual editor** (#5)
