@@ -339,7 +339,7 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 
 ## Changelog
 
-### 1.8.0
+### 1.7.0
 **Language support** — [#18](https://github.com/johro897/tplink-switch-card/issues/18)
 - All rendered UI text (overview tile labels, port status/PoE badges, detail-row labels, label editor, PoE configure panel, budget-limit editor and its error messages, and the visual editor's field labels) now auto-translates based on your Home Assistant instance's configured language
 - Supported languages: **English** (default), **Swedish**, **German**, **French** — falls back to English for any other language
