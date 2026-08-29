@@ -42,6 +42,18 @@
   const OVERVIEW_LAYOUTS = new Set(["tiles", "compact", "hidden"]);
   const MAX_LABEL_LENGTH = 40;
 
+  // PoE consumption sparkline (issue #14). Bucketed to a fixed point count
+  // rather than plotting every raw history row — a 7-day window at the
+  // underlying integration's default 30s poll interval could otherwise mean
+  // ~20000 points in one SVG path.
+  const DEFAULT_POE_HISTORY_HOURS = 24;
+  const MAX_POE_HISTORY_HOURS = 24 * 7;
+  const POE_HISTORY_BUCKETS = 120;
+  // Floor on how often we hit the History API, independent of how often the
+  // hass tick fires — protects against a user-configured tplink_easy_smart
+  // scan_interval shorter than the default 30s.
+  const POE_HISTORY_MIN_REFRESH_MS = 20000;
+
   const DEFAULT_LANG = "en";
 
   // Every UI string this file's card + editor render, keyed by BCP-47
@@ -107,6 +119,7 @@
       editor_has_poe: "Switch has PoE",
       editor_poe_ports: "Number of PoE ports",
       editor_max_poe_watts: "Hardware PoE max (W)",
+      editor_poe_history_hours: "PoE history window (hours)",
       editor_total_ports: "Total ports",
       editor_overview_layout: "Overview layout",
       editor_overview_fields: "Overview fields",
@@ -179,6 +192,7 @@
       editor_has_poe: "Switchen har PoE",
       editor_poe_ports: "Antal PoE-portar",
       editor_max_poe_watts: "Hårdvarans PoE-max (W)",
+      editor_poe_history_hours: "PoE-historikfönster (timmar)",
       editor_total_ports: "Totalt antal portar",
       editor_overview_layout: "Översiktslayout",
       editor_overview_fields: "Översiktsfält",
@@ -251,6 +265,7 @@
       editor_has_poe: "Switch hat PoE",
       editor_poe_ports: "Anzahl PoE-Ports",
       editor_max_poe_watts: "Hardware-PoE-Maximum (W)",
+      editor_poe_history_hours: "PoE-Verlaufsfenster (Stunden)",
       editor_total_ports: "Ports gesamt",
       editor_overview_layout: "Übersichtslayout",
       editor_overview_fields: "Übersichtsfelder",
@@ -323,6 +338,7 @@
       editor_has_poe: "Le switch a du PoE",
       editor_poe_ports: "Nombre de ports PoE",
       editor_max_poe_watts: "Maximum PoE matériel (W)",
+      editor_poe_history_hours: "Fenêtre d'historique PoE (heures)",
       editor_total_ports: "Nombre total de ports",
       editor_overview_layout: "Disposition de l'aperçu",
       editor_overview_fields: "Champs de l'aperçu",
@@ -367,6 +383,12 @@
       this._editingLimit  = false;     // overview PoE limit editor open
       this._portEntitiesCache = new Map();
 
+      // PoE consumption sparkline (issue #14)
+      this._poeHistoryBuckets   = null;  // { values: number[], purged: bool } | null
+      this._poeHistoryFetchedAt = 0;
+      this._poeHistoryFetching  = false;
+      this._poeHistoryConfigKey = null;
+
       // Pending configure values — keyed by port
       this._pendingPoe    = new Map(); // port → { priority, power_limit }
       this._pendingLimit  = "";        // draft global PoE limit
@@ -389,6 +411,7 @@
         total_ports: 16,
         entity_prefix: "tp_link_switch",
         max_poe_watts: null,
+        poe_history_hours: DEFAULT_POE_HISTORY_HOURS,
         overview_layout: "tiles",
         overview_fields: [...DEFAULT_OVERVIEW_FIELDS],
         show_switch_link: true,
@@ -399,6 +422,11 @@
       };
       this.config.has_poe = this.config.has_poe !== false;
       if (!this.config.has_poe) this.config.poe_ports = 0;
+
+      const historyHours = Number(this.config.poe_history_hours);
+      this.config.poe_history_hours = Number.isFinite(historyHours)
+        ? Math.min(MAX_POE_HISTORY_HOURS, Math.max(1, Math.round(historyHours)))
+        : DEFAULT_POE_HISTORY_HOURS;
 
       if (!OVERVIEW_LAYOUTS.has(this.config.overview_layout)) {
         this.config.overview_layout = "tiles";
@@ -434,6 +462,18 @@
       // Only depends on entity_prefix/has_poe/total_ports/poe_ports, all fixed
       // above — recompute once per config change instead of on every hass tick.
       this._watchedEntitiesCache = this._watchedEntities();
+
+      // Editing an unrelated field (title, a port label, ...) re-runs setConfig
+      // too — only wipe the cached history when something that actually
+      // changes the History API query changed, or we'd refetch on every
+      // keystroke in the visual editor.
+      const poeHistoryKey = `${this.config.entity_prefix}|${this.config.has_poe}|${this.config.poe_history_hours}`;
+      if (poeHistoryKey !== this._poeHistoryConfigKey) {
+        this._poeHistoryConfigKey = poeHistoryKey;
+        this._poeHistoryBuckets = null;
+        this._poeHistoryFetchedAt = 0;
+      }
+
       this.render();
     }
 
@@ -947,6 +987,8 @@
           background: var(--primary-color, #03a9f4);
           transition: width 0.4s ease;
         }
+        .poe-spark-wrap { margin-top: 0.4rem; }
+        .poe-spark { display: block; width: 100%; height: 22px; }
 
         /* Limit editor */
         .limit-editor {
@@ -1176,6 +1218,144 @@
       return `${n}M`;
     }
 
+    /** Same 80%/95% thresholds used everywhere PoE load gets a color (budget bar, header pill, sparkline). */
+    _poeBarColor(pct) {
+      return pct > 95 ? "var(--error-color, #c22040)"
+        : pct > 80 ? "var(--warning-color, #f4b942)"
+        : "var(--primary-color, #03a9f4)";
+    }
+
+    /** Local-time ISO string without a "Z" suffix — HA interprets an unzoned timestamp as local time. */
+    _localISO(date) {
+      const p = n => String(n).padStart(2, "0");
+      return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}` +
+        `T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
+    }
+
+    /**
+     * Fetches sensor.<prefix>_poe_consumption's history for the configured
+     * window and bucketizes it, then patches just the sparkline <svg> in
+     * place (_updateSparkline) rather than a full render() — avoids
+     * disrupting any expanded port row or in-progress limit edit while the
+     * network request is in flight.
+     */
+    async _refreshPoeHistory() {
+      if (!this.config.has_poe || this._poeHistoryFetching || !this._hass) return;
+      const now = Date.now();
+      if (this._poeHistoryFetchedAt && now - this._poeHistoryFetchedAt < POE_HISTORY_MIN_REFRESH_MS) return;
+      this._poeHistoryFetching = true;
+      this._poeHistoryFetchedAt = now;
+
+      const pfx    = this.config.entity_prefix;
+      const entity = `sensor.${pfx}_poe_consumption`;
+      const hours  = this.config.poe_history_hours;
+      const end    = new Date();
+      const start  = new Date(end.getTime() - hours * 3600 * 1000);
+      // Small margin before the window start so a state that hasn't changed
+      // in a while still shows up as the carried-forward value at t=0.
+      const fetchFrom = new Date(start.getTime() - 30 * 60 * 1000);
+
+      try {
+        const path = `history/period/${this._localISO(fetchFrom)}?filter_entity_id=${entity}&end_time=${this._localISO(end)}&minimal_response=true&no_attributes=true`;
+        const resp = await this._hass.callApi("GET", path);
+        const raw = resp?.[0] ?? [];
+        this._poeHistoryBuckets = this._bucketizePoeHistory(raw, start.getTime(), end.getTime());
+      } catch (err) {
+        console.warn(`${CARD_NAME}: failed to fetch PoE consumption history`, err);
+        this._poeHistoryBuckets = null;
+      } finally {
+        this._poeHistoryFetching = false;
+        this._updateSparkline();
+      }
+    }
+
+    /**
+     * Downsamples raw history/period rows into POE_HISTORY_BUCKETS fixed-width
+     * buckets, taking the MAX value seen in each bucket (not the average) —
+     * the whole point of the sparkline is to surface a momentary spike, which
+     * averaging would smooth away. A bucket with no state change in it just
+     * carries forward the last known value, matching how entity history
+     * actually behaves (state holds until the next recorded change).
+     */
+    _bucketizePoeHistory(raw, startMs, endMs) {
+      const points = raw
+        .map(s => ({
+          t: s.lu ? s.lu * 1000 : new Date(s.last_changed).getTime(),
+          v: parseFloat(s.state),
+        }))
+        .filter(p => Number.isFinite(p.t) && !isNaN(p.v))
+        .sort((a, b) => a.t - b.t);
+
+      if (points.length < 2) return { values: [], purged: true };
+
+      const bucketMs = (endMs - startMs) / POE_HISTORY_BUCKETS;
+      const values = new Array(POE_HISTORY_BUCKETS);
+
+      let pointer = 0;
+      let carry = points[0].v;
+      while (pointer < points.length && points[pointer].t <= startMs) {
+        carry = points[pointer].v;
+        pointer++;
+      }
+
+      for (let b = 0; b < POE_HISTORY_BUCKETS; b++) {
+        const bucketEnd = startMs + (b + 1) * bucketMs;
+        let bucketMax = -Infinity;
+        let saw = false;
+        while (pointer < points.length && points[pointer].t < bucketEnd) {
+          bucketMax = Math.max(bucketMax, points[pointer].v);
+          carry = points[pointer].v;
+          saw = true;
+          pointer++;
+        }
+        values[b] = saw ? bucketMax : carry;
+      }
+
+      return { values, purged: false };
+    }
+
+    /** Patches just the sparkline <svg> after an async history fetch resolves — see _refreshPoeHistory. */
+    _updateSparkline() {
+      const svg = this.querySelector("#poe-history-spark");
+      if (!svg) return; // not currently on screen (hidden layout, has_poe off, ...) — next full render() picks up fresh data
+      // Re-read the live budget limit rather than trusting a stale closure —
+      // it's power_limit_w off the sensor, NEVER max_poe_watts (that's only
+      // the editor's client-side input cap, see the CLAUDE.md gotcha on it).
+      const pfx = this.config.entity_prefix;
+      const limitW = parseFloat(this._e(`sensor.${pfx}_poe_consumption`)?.attributes?.power_limit_w ?? 0) || 0;
+      svg.outerHTML = this._renderPoeSparkSvg(limitW);
+    }
+
+    /** Kicks off/refreshes the history fetch and returns the wrapper markup — the <svg> itself is filled in by _renderPoeSparkSvg. */
+    _renderPoeSparkline(limitW) {
+      if (!limitW) return ""; // no hardware budget to scale a percentage against
+      this._refreshPoeHistory();
+      return `<div class="poe-spark-wrap">${this._renderPoeSparkSvg(limitW)}</div>`;
+    }
+
+    _renderPoeSparkSvg(limitW) {
+      const W = 300, H = 28, PAD = 2;
+      const data = this._poeHistoryBuckets;
+      if (!data || data.purged || data.values.length === 0) {
+        return `<svg class="poe-spark" id="poe-history-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"></svg>`;
+      }
+      const limit  = limitW > 0 ? limitW : 1;
+      const values = data.values;
+      const n      = values.length;
+      const scaleMax = Math.max(limit, ...values);
+      const x = i => (i / (n - 1)) * W;
+      const y = v => H - PAD - (v / scaleMax) * (H - PAD * 2);
+
+      let segs = "";
+      for (let i = 1; i < n; i++) {
+        const v0 = values[i - 1], v1 = values[i];
+        const segPct = Math.min(100, (Math.max(v0, v1) / limit) * 100);
+        const color = this._poeBarColor(segPct);
+        segs += `<line x1="${x(i - 1).toFixed(1)}" y1="${y(v0).toFixed(1)}" x2="${x(i).toFixed(1)}" y2="${y(v1).toFixed(1)}" stroke="${color}" stroke-width="1.6" stroke-linecap="round"/>`;
+      }
+      return `<svg class="poe-spark" id="poe-history-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${segs}</svg>`;
+    }
+
     _renderOverview() {
       const pfx    = this.config.entity_prefix;
       const hasPoe = this.config.has_poe;
@@ -1191,7 +1371,7 @@
       const limitW   = parseFloat(poeS?.attributes?.power_limit_w ?? 0) || 0;
       const remainW  = parseFloat(poeS?.attributes?.power_remain_w ?? 0) || 0;
       const pct      = limitW > 0 ? Math.min(100, (consumed / limitW) * 100) : 0;
-      const barColor = pct > 95 ? "var(--error-color, #c22040)" : pct > 80 ? "var(--warning-color, #f4b942)" : "var(--primary-color, #03a9f4)";
+      const barColor = this._poeBarColor(pct);
 
       const ip        = netS?.state ?? "—";
       const mac       = netS?.attributes?.mac ?? "—";
@@ -1280,6 +1460,7 @@
                   <div class="poe-bar-fill" style="width:${pct.toFixed(1)}%;background:${barColor}"></div>
                 </div>
                 ${limitEditorHtml}
+                ${this._renderPoeSparkline(limitW)}
               </div>` : "";
 
           default:
@@ -1445,9 +1626,7 @@
       // Mirror the budget bar's own amber/red thresholds on the header pill,
       // so overall load is visible at a glance even when overview_layout: hidden.
       const headerPoePct   = limitW > 0 ? Math.min(100, (totalWatts / limitW) * 100) : 0;
-      const headerPoeColor = headerPoePct > 95 ? "var(--error-color, #c22040)"
-        : headerPoePct > 80 ? "var(--warning-color, #f4b942)"
-        : "var(--primary-color, #03a9f4)";
+      const headerPoeColor = this._poeBarColor(headerPoePct);
 
       this.innerHTML = `
         <div class="card">
@@ -1691,6 +1870,7 @@
         schema.push(
           { name: "poe_ports", selector: { number: { min: 0, max: 48, mode: "box" } } },
           { name: "max_poe_watts", selector: { number: { min: 0, mode: "box" } } },
+          { name: "poe_history_hours", selector: { number: { min: 1, max: MAX_POE_HISTORY_HOURS, mode: "box" } } },
         );
       }
       schema.push(

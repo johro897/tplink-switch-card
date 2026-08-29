@@ -66,8 +66,9 @@
     return el;
   }
 
-  function fakeHass({ states = {}, language = 'en', callServiceImpl } = {}) {
+  function fakeHass({ states = {}, language = 'en', callServiceImpl, callApiImpl } = {}) {
     const calls = [];
+    const apiCalls = [];
     const hass = {
       states,
       locale: { language },
@@ -75,8 +76,12 @@
         calls.push({ domain, service, data });
         return callServiceImpl ? callServiceImpl(domain, service, data) : Promise.resolve();
       },
+      callApi: (method, path) => {
+        apiCalls.push({ method, path });
+        return callApiImpl ? callApiImpl(method, path) : Promise.resolve([[]]);
+      },
     };
-    return { hass, calls };
+    return { hass, calls, apiCalls };
   }
 
   // A minimal 2-port switch (1 PoE port, 1 regular), enough to exercise
@@ -333,6 +338,103 @@
     assertEqual(calls[0].service, 'set_general_poe_limit');
     assertEqual(calls[0].data.mac_address, 'AA:BB:CC:DD:EE:FF');
     assertEqual(calls[0].data.power_limit, 80);
+  });
+
+  // ---------------------------------------------------------------------
+  // PoE consumption sparkline (issue #14)
+  // ---------------------------------------------------------------------
+  test('poe_history_hours: defaults to 24, clamps to [1, 168]', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    assertEqual(card.config.poe_history_hours, 24, 'default when not set in config');
+
+    card.setConfig(baseConfig({ poe_history_hours: 500 }));
+    assertEqual(card.config.poe_history_hours, 168, 'clamped to the 7-day max');
+
+    card.setConfig(baseConfig({ poe_history_hours: 0 }));
+    assertEqual(card.config.poe_history_hours, 1, 'clamped to a minimum of 1, not 0');
+
+    card.setConfig(baseConfig({ poe_history_hours: 'not-a-number' }));
+    assertEqual(card.config.poe_history_hours, 24, 'invalid value falls back to the default, not NaN');
+  });
+
+  test('_poeBarColor: same 80%/95% thresholds as the budget bar and header pill reuse', () => {
+    const card = freshCard();
+    assertEqual(card._poeBarColor(50), 'var(--primary-color, #03a9f4)');
+    assertEqual(card._poeBarColor(80), 'var(--primary-color, #03a9f4)', 'boundary itself is not yet "elevated"');
+    assertEqual(card._poeBarColor(81), 'var(--warning-color, #f4b942)');
+    assertEqual(card._poeBarColor(95), 'var(--warning-color, #f4b942)', 'boundary itself is not yet "critical"');
+    assertEqual(card._poeBarColor(96), 'var(--error-color, #c22040)');
+  });
+
+  test('_bucketizePoeHistory: fewer than 2 points is reported as purged/no data', () => {
+    const card = freshCard();
+    assertDeepEqual(card._bucketizePoeHistory([], 0, 1000), { values: [], purged: true });
+    assertDeepEqual(
+      card._bucketizePoeHistory([{ state: '5', last_changed: '2026-01-01T00:00:00' }], 0, 1000),
+      { values: [], purged: true }
+    );
+  });
+
+  test('_bucketizePoeHistory: takes the MAX per bucket, not an average, so a spike survives downsampling', () => {
+    const card = freshCard();
+    const start = new Date('2026-01-01T00:00:00').getTime();
+    const end = start + 60 * 60 * 1000; // 1h window → one raw point roughly every ~30s at 120 buckets
+    const mid = start + 30 * 60 * 1000;
+    const raw = [
+      { state: '5', last_changed: new Date(start).toISOString() },
+      { state: '5', last_changed: new Date(start + 5 * 60 * 1000).toISOString() },
+      { state: '140', last_changed: new Date(mid).toISOString() }, // one brief spike
+      { state: '6', last_changed: new Date(mid + 60 * 1000).toISOString() }, // immediately drops back down
+      { state: '6', last_changed: new Date(end - 60 * 1000).toISOString() },
+    ];
+    const result = card._bucketizePoeHistory(raw, start, end);
+    assertEqual(result.purged, false);
+    assertEqual(result.values.length, 120);
+    const peak = Math.max(...result.values);
+    assertEqual(peak, 140, 'the 140W spike must still be visible after bucketing, not averaged into a low value');
+  });
+
+  test('_bucketizePoeHistory: a bucket with no state change carries forward the last known value', () => {
+    const card = freshCard();
+    const start = new Date('2026-01-01T00:00:00').getTime();
+    const end = start + 24 * 60 * 60 * 1000; // 24h — most buckets will see zero raw points from just 2 samples
+    const raw = [
+      { state: '10', last_changed: new Date(start).toISOString() },
+      { state: '20', last_changed: new Date(start + 60 * 1000).toISOString() },
+    ];
+    const result = card._bucketizePoeHistory(raw, start, end);
+    assertEqual(result.purged, false);
+    assertEqual(result.values[result.values.length - 1], 20, 'last bucket has no raw point in it — must carry forward 20, not drop to 0 or null');
+  });
+
+  test('_refreshPoeHistory: queries history/period for the poe_consumption entity and stores bucketized results', async () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ poe_history_hours: 1 }));
+    const rawResponse = [[
+      { state: '12.5', last_changed: '2026-01-01T00:00:00+00:00' },
+      { state: '13.0', last_changed: '2026-01-01T00:30:00+00:00' },
+    ]];
+    const { hass, apiCalls } = fakeHass({ states: baseStates(), callApiImpl: () => Promise.resolve(rawResponse) });
+    card.hass = hass;
+    await card._refreshPoeHistory();
+    assertEqual(apiCalls.length, 1);
+    assertEqual(apiCalls[0].method, 'GET');
+    assertTrue(apiCalls[0].path.startsWith('history/period/'), 'must use the classic REST history endpoint, not a websocket call');
+    assertTrue(apiCalls[0].path.includes('filter_entity_id=sensor.tp_link_switch_poe_consumption'));
+    assertTrue(apiCalls[0].path.includes('minimal_response=true'));
+    assertEqual(card._poeHistoryBuckets.purged, false);
+    assertEqual(card._poeHistoryBuckets.values.length, 120);
+  });
+
+  test('_refreshPoeHistory: skipped when called again inside the min-refresh window', async () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const { hass, apiCalls } = fakeHass({ states: baseStates(), callApiImpl: () => Promise.resolve([[]]) });
+    card.hass = hass;
+    await card._refreshPoeHistory();
+    await card._refreshPoeHistory();
+    assertEqual(apiCalls.length, 1, 'a second call right after the first must not re-hit the History API');
   });
 
   // ---------------------------------------------------------------------
