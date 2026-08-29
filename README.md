@@ -20,6 +20,7 @@ has_poe: true                   # default: true
 poe_ports: 8                    # number of PoE-capable ports (counted from port 1)
 total_ports: 16                 # total number of switch ports
 max_poe_watts: 150              # optional: hardware PoE cap (blocks budget editor above this)
+poe_history_hours: 24            # optional: PoE sparkline window in hours, 1-168 (7 days)
 overview_layout: tiles            # tiles, compact or hidden
 overview_fields:                  # optional: visible fields and their order
   - ip
@@ -76,6 +77,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **Visual editor** — configure the card through Home Assistant's UI editor, no YAML required for setup
 - **Configurable switch overview** — choose visible fields and their order; use tile, compact or hidden layout
 - **PoE budget bar** — always shows the switch's actual current budget, read live from its own sensor; click ✏️ to change it — this sends a real command to the switch, it's not just a display value
+- **PoE consumption sparkline** — a small trend line under the budget bar, colored per-segment with the same 80%/95% thresholds as the bar itself, so a brief spike reads differently from sustained load; default 24h window, configurable up to 7 days
 - **Adaptive port sections** — PoE and regular ports are separated on PoE switches; non-PoE switches show one port list
 - **Optional port labels** — add readable names to selected ports without configuring every port
 - **Inline label editing** — rename ports directly in the expanded row; saved to the dashboard config on storage-mode dashboards, localStorage fallback otherwise
@@ -88,6 +90,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **PoE hardware cap** — optional `max_poe_watts` stops you from entering a value above your switch's physical limit in the budget editor; it's a safety cap on the *input*, not the value shown in the budget bar
 - **Theme-aware** — uses HA CSS variables throughout, works with any theme
 - **Efficient rendering** — only re-renders when a watched entity actually changes state or attribute
+- **Multi-language UI** — auto-translates to your Home Assistant language: English (default), Swedish, German, French
 
 ---
 
@@ -130,6 +133,10 @@ The card has three interaction levels:
 
 ![](screenshots/port_detail.png)
 
+Non-PoE ports (or PoE ports beyond `poe_ports`) expand to a simpler version of the same row — just speed, configured status, the port-enabled toggle, and the label field:
+
+![](screenshots/port_config_non_poe.png)
+
 **3. Configure panel** — click **Configure PoE** inside the detail row to open an inline editor for PoE priority and power limit. Hit **Apply** to send the change to the switch, or **Cancel** to close without saving.
 
 ![](screenshots/configure_panel.png)
@@ -155,6 +162,7 @@ Add the card via **Edit Dashboard → Add Card → TP-Link Switch Card** and con
 | `poe_ports` | No | `8` | Number of PoE-capable ports, counted from port 1. Ignored when `has_poe` is `false` |
 | `total_ports` | No | `16` | Total number of switch ports |
 | `max_poe_watts` | No | — | Client-side cap on the budget editor's input field — prevents entering a value above your switch's physical PoE maximum (e.g. `150` for TL-SG1016PE). Does **not** set or override the value shown in the budget bar, which always reflects the switch's own reported budget. Ignored when `has_poe` is `false` |
+| `poe_history_hours` | No | `24` | How far back the PoE budget sparkline looks, in hours. Clamped to 1–168 (7 days). Limited in practice by your `recorder` integration's own retention (`purge_keep_days`). Ignored when `has_poe` is `false` |
 | `overview_layout` | No | `tiles` | Overview design: `tiles`, `compact`, or `hidden` |
 | `overview_fields` | No | all fields | Ordered list of visible overview fields. An empty list hides the overview |
 | `show_switch_link` | No | `true` | Show the switch web-interface shortcut beside the IP address |
@@ -220,6 +228,8 @@ overview_fields:
   - netmask
 ```
 
+![Compact overview layout](screenshots/overview_compact.png)
+
 Keep the IP address but hide the web-interface shortcut:
 
 ```yaml
@@ -281,15 +291,29 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ### Full card overview
 ![Full card overview](screenshots/overview.png)
-*Switch overview tiles, PoE budget bar, PoE port section and regular port section.*
+*Switch overview tiles, PoE budget bar with consumption sparkline, PoE port section and regular port section.*
 
 ### Overview tiles — copy and UI link
 ![Overview tiles with IP copy and link icon](screenshots/overview_tiles.png)
 *Click the IP or MAC tile to copy the value. The link icon opens the switch web UI in a new tab.*
 
+![IP tile showing the click-to-copy hint](screenshots/copy_content.png)
+*Hovering a copyable tile shows what it does before you click.*
+
+### Compact overview layout
+![Compact overview layout](screenshots/overview_compact.png)
+*`overview_layout: compact` — the same fields in a denser, label-on-the-left layout instead of tiles.*
+
+### Port labels and PoE badges
+![Port list with custom labels and PoE badges](screenshots/port_down.png)
+*Ports with a configured label show it inline; the PoE badge distinguishes powered ports from regular ones at a glance.*
+
 ### Expanded port detail
 ![Expanded port detail row](screenshots/port_detail.png)
 *Expand a port to see all sensor values, configured speed, enable toggles and the label editor.*
+
+![Expanded detail row for a non-PoE port](screenshots/port_config_non_poe.png)
+*A non-PoE port gets a shorter version of the same row — no PoE fields, no Configure PoE button.*
 
 ### PoE configure panel
 ![PoE configure panel with priority and power limit dropdowns](screenshots/configure_panel.png)
@@ -297,11 +321,11 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ### PoE budget editor with hardware cap
 ![PoE budget editor showing max_poe_watts warning](screenshots/poe_budget_editor.png)
-*The budget editor shows the hardware cap and blocks Apply if the value exceeds it.*
+*The budget editor shows the hardware cap and blocks Apply if the value exceeds it. The sparkline below it shows the last `poe_history_hours` of consumption.*
 
 ### PoE budget warning
-![PoE bar turning amber at high load](screenshots/poe_warning.png)
-*Budget bar turns amber above 80% and red above 95% load.*
+![PoE bar and sparkline turning red at maximum load](screenshots/poe_warning.png)
+*Both the budget bar and the sparkline turn amber above 80% and red above 95% load — the same thresholds, so a spike reads consistently everywhere it shows up.*
 
 ---
 
@@ -334,6 +358,25 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
+
+### 1.8.0
+**Language support** — [#18](https://github.com/johro897/tplink-switch-card/issues/18)
+- All rendered UI text (overview tile labels, port status/PoE badges, detail-row labels, label editor, PoE configure panel, budget-limit editor and its error messages, and the visual editor's field labels) now auto-translates based on your Home Assistant instance's configured language
+- Supported languages: **English** (default), **Swedish**, **German**, **French** — falls back to English for any other language
+- Service parameter values (`Low`/`Middle`/`High` priority, `Auto`/`Class 1-4`/`Manual` power limit) are unchanged — those are real `tplink_easy_smart` values, not display text
+
+**Testing** — [#19](https://github.com/johro897/tplink-switch-card/issues/19)
+- Added a checked-in, dependency-free test suite (`test/tplink-switch-card.test.html`) that loads the real card file and exercises it against fake `hass` objects in a real browser — no build chain, no npm
+
+**PoE consumption sparkline** — [#14](https://github.com/johro897/tplink-switch-card/issues/14)
+- The PoE budget bar now shows a small inline-SVG trend line of recent consumption underneath it, colored per-segment with the same 80%/95% thresholds as the bar itself — makes a momentary spike easy to tell apart from sustained load
+- Default window is 24 hours, configurable up to 7 days via the new `poe_history_hours` option (also exposed in the visual editor)
+- Downsampled to a fixed number of points using the max value per bucket, not an average, so spikes stay visible even on a multi-day view
+- Uses Home Assistant's own History API — the same approach as `electricity-pie-card` — so there's no new dependency, only your `recorder` integration's own retention setting limits how far back it can show
+
+**Screenshots** — [#4](https://github.com/johro897/tplink-switch-card/issues/4)
+- Refreshed every screenshot from a live instance so they reflect the current card, including the new PoE sparkline
+- Added new screenshots: compact overview layout, the click-to-copy hint, a non-PoE port's detail row, and port labels with PoE badges
 
 ### 1.6.0
 **Security hardening** — [#11](https://github.com/johro897/tplink-switch-card/issues/11)
