@@ -88,6 +88,7 @@ Set `overview_layout: hidden` or `overview_fields: []` to remove the overview co
 - **PoE hardware cap** — optional `max_poe_watts` stops you from entering a value above your switch's physical limit in the budget editor; it's a safety cap on the *input*, not the value shown in the budget bar
 - **Theme-aware** — uses HA CSS variables throughout, works with any theme
 - **Efficient rendering** — only re-renders when a watched entity actually changes state or attribute
+- **Multi-language UI** — auto-translates to your Home Assistant language: English (default), Swedish, German, French
 
 ---
 
@@ -334,6 +335,12 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 ---
 
 ## Changelog
+
+### 1.7.0
+**Language support** — [#18](https://github.com/johro897/tplink-switch-card/issues/18)
+- All rendered UI text (overview tile labels, port status/PoE badges, detail-row labels, label editor, PoE configure panel, budget-limit editor and its error messages, and the visual editor's field labels) now auto-translates based on your Home Assistant instance's configured language
+- Supported languages: **English** (default), **Swedish**, **German**, **French** — falls back to English for any other language
+- Service parameter values (`Low`/`Middle`/`High` priority, `Auto`/`Class 1-4`/`Manual` power limit) are unchanged — those are real `tplink_easy_smart` values, not display text
 
 ### 1.6.0
 **Security hardening** — [#11](https://github.com/johro897/tplink-switch-card/issues/11)

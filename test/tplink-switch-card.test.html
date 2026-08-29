@@ -1,0 +1,377 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>tplink-switch-card tests</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #ddd; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; }
+  .summary { font-size: 15px; font-weight: 600; margin: 16px 0; padding: 10px 14px; border-radius: 8px; }
+  .summary.pass { background: #103a1f; color: #7ee0a0; }
+  .summary.fail { background: #3a1010; color: #f08585; }
+  ul { list-style: none; padding: 0; }
+  li { padding: 6px 10px; border-radius: 6px; margin-bottom: 3px; font-size: 13px; font-family: ui-monospace, monospace; }
+  li.pass { background: #16281c; color: #8fd6a8; }
+  li.fail { background: #2a1414; color: #f2a3a3; }
+  li .err { display: block; color: #e0b0b0; margin-top: 4px; white-space: pre-wrap; }
+  #card-host { position: absolute; left: -9999px; top: -9999px; }
+</style>
+</head>
+<body>
+<h1>tplink-switch-card — test suite</h1>
+<p style="color:#999; font-size:13px;">Open this file directly in a browser, or serve the repo root with any static file server and open <code>/test/tplink-switch-card.test.html</code>. Loads the real card file from <code>../tplink-switch-card.js</code> — see <code>test/README.md</code>.</p>
+<div id="summary"></div>
+<ul id="results"></ul>
+
+<div id="card-host"></div>
+
+<script src="../tplink-switch-card.js"></script>
+<script>
+(async () => {
+  // ---------------------------------------------------------------------
+  // Tiny zero-dependency test framework (same shape as music-multiroom-card's)
+  // ---------------------------------------------------------------------
+  const cases = [];
+  function test(name, fn) { cases.push({ name, fn }); }
+
+  function assertEqual(actual, expected, msg) {
+    if (actual !== expected) {
+      throw new Error(`${msg || 'assertEqual failed'}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+    }
+  }
+  function assertTrue(cond, msg) {
+    if (!cond) throw new Error(msg || 'assertTrue failed');
+  }
+  function assertDeepEqual(actual, expected, msg) {
+    const a = JSON.stringify(actual);
+    const e = JSON.stringify(expected);
+    if (a !== e) throw new Error(`${msg || 'assertDeepEqual failed'}: expected ${e}, got ${a}`);
+  }
+
+  // ---------------------------------------------------------------------
+  // Helpers for building fresh card/editor instances and fake hass objects.
+  // The card renders into light DOM (this.innerHTML), not a Shadow DOM, so
+  // tests query the card element directly — no .shadowRoot indirection.
+  // ---------------------------------------------------------------------
+  const host = document.getElementById('card-host');
+
+  function freshCard() {
+    const el = document.createElement('tplink-switch-card');
+    host.appendChild(el);
+    return el;
+  }
+  function freshEditor() {
+    const el = document.createElement('tplink-switch-card-editor');
+    host.appendChild(el);
+    return el;
+  }
+
+  function fakeHass({ states = {}, language = 'en', callServiceImpl } = {}) {
+    const calls = [];
+    const hass = {
+      states,
+      locale: { language },
+      callService: (domain, service, data) => {
+        calls.push({ domain, service, data });
+        return callServiceImpl ? callServiceImpl(domain, service, data) : Promise.resolve();
+      },
+    };
+    return { hass, calls };
+  }
+
+  // A minimal 2-port switch (1 PoE port, 1 regular), enough to exercise
+  // rendering without a full 16-port config on every test.
+  function baseConfig(overrides = {}) {
+    return {
+      type: 'custom:tplink-switch-card',
+      entity_prefix: 'tp_link_switch',
+      has_poe: true,
+      poe_ports: 1,
+      total_ports: 2,
+      ...overrides,
+    };
+  }
+
+  function baseStates(overrides = {}) {
+    return {
+      'sensor.tp_link_switch_network_info': { state: '192.168.1.10', attributes: { mac: 'AA:BB:CC:DD:EE:FF', gateway: '192.168.1.1', netmask: '255.255.255.0' } },
+      'sensor.tp_link_switch_poe_consumption': { state: '12.5', attributes: { power_limit_w: 65, power_remain_w: 52.5 } },
+      'binary_sensor.tp_link_switch_port_1_state': { state: 'on', attributes: { speed: '1000M' } },
+      'binary_sensor.tp_link_switch_port_1_poe_state': { state: 'on', attributes: { power_w: 4.2, priority: 'Low', power_limit: 'Auto' } },
+      'switch.tp_link_switch_port_1_poe_enabled': { state: 'on' },
+      'switch.tp_link_switch_port_1_enabled': { state: 'on' },
+      'binary_sensor.tp_link_switch_port_2_state': { state: 'off', attributes: {} },
+      'switch.tp_link_switch_port_2_enabled': { state: 'on' },
+      ...overrides,
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Config normalization (setConfig)
+  // ---------------------------------------------------------------------
+  test('has_poe: false zeroes poe_ports and drops PoE overview fields', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ has_poe: false, overview_fields: ['ip', 'poe_used', 'poe_budget'] }));
+    assertEqual(card.config.poe_ports, 0);
+    assertDeepEqual(card.config.overview_fields, ['ip', 'poe_used', 'poe_budget'], 'overview_fields list itself is not filtered by has_poe — renderField() hides PoE fields at render time instead');
+  });
+
+  test('font_scale clamps to [0.7, 2]', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ font_scale: 5 }));
+    assertEqual(card.config.font_scale, 2);
+    card.setConfig(baseConfig({ font_scale: 0.1 }));
+    assertEqual(card.config.font_scale, 0.7);
+    card.setConfig(baseConfig({ font_scale: 'not-a-number' }));
+    assertEqual(card.config.font_scale, 1, 'invalid font_scale falls back to the default, not NaN');
+  });
+
+  test('overview_fields drops unknown values, keeps only recognized fields', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ overview_fields: ['ip', 'bogus_field', 'mac', 'ip'] }));
+    assertDeepEqual(card.config.overview_fields, ['ip', 'mac'], 'unknown fields dropped, duplicates collapsed');
+  });
+
+  test('port_labels: out-of-range and empty labels are dropped, valid ones trimmed', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({
+      total_ports: 4,
+      port_labels: { 1: '  Router  ', 3: '', 5: 'Out of range', abc: 'Not a number' },
+    }));
+    assertDeepEqual(card.config.port_labels, { 1: 'Router' });
+  });
+
+  // ---------------------------------------------------------------------
+  // Formatting helpers
+  // ---------------------------------------------------------------------
+  test('_fmtSpeed maps raw speed strings to short display labels', () => {
+    const card = freshCard();
+    assertEqual(card._fmtSpeed('10000M'), '10G');
+    assertEqual(card._fmtSpeed('2500M'), '2.5G');
+    assertEqual(card._fmtSpeed('1000MF'), '1G');
+    assertEqual(card._fmtSpeed('100M'), '100M');
+    assertEqual(card._fmtSpeed('10M'), '10M');
+    assertEqual(card._fmtSpeed(null), null);
+  });
+
+  // ---------------------------------------------------------------------
+  // Dirty-check (_statesChanged) — regression risk flagged in CLAUDE.md:
+  // a newly-watched attribute must be added to BOTH _watchedEntities() and
+  // _statesChanged(), or updates get silently missed.
+  // ---------------------------------------------------------------------
+  test('_statesChanged: false when an unrelated entity changes', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const before = baseStates();
+    const after = { ...before, 'sensor.unrelated_thing': { state: 'changed' } };
+    assertEqual(card._statesChanged({ states: before }, { states: after }), false);
+  });
+
+  test('_statesChanged: true when a watched port\'s power_w attribute changes', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const before = baseStates();
+    const after = {
+      ...before,
+      'binary_sensor.tp_link_switch_port_1_poe_state': {
+        ...before['binary_sensor.tp_link_switch_port_1_poe_state'],
+        attributes: { ...before['binary_sensor.tp_link_switch_port_1_poe_state'].attributes, power_w: 9.9 },
+      },
+    };
+    assertEqual(card._statesChanged({ states: before }, { states: after }), true);
+  });
+
+  // ---------------------------------------------------------------------
+  // Overview rendering + language
+  // ---------------------------------------------------------------------
+  test('overview_layout: hidden renders no overview section', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ overview_layout: 'hidden' }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    assertEqual(card.querySelectorAll('.overview').length, 0);
+  });
+
+  test('Overview renders IP/MAC tiles when configured', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ overview_fields: ['ip', 'mac'] }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    const values = Array.from(card.querySelectorAll('.ov-value')).map((el) => el.textContent);
+    assertTrue(values.includes('192.168.1.10'), 'expected the IP value tile');
+    assertTrue(values.includes('AA:BB:CC:DD:EE:FF'), 'expected the MAC value tile');
+  });
+
+  test('Port link status label localizes to Swedish', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    card.hass = fakeHass({ states: baseStates(), language: 'sv' }).hass;
+    const speedEl = card.querySelector('.port-speed');
+    assertEqual(speedEl.textContent, '1G', 'port 1 is up with a real speed, so it shows the formatted speed, not the up/down word');
+    const downStates = baseStates({ 'binary_sensor.tp_link_switch_port_2_state': { state: 'off', attributes: {} } });
+    card.hass = fakeHass({ states: downStates, language: 'sv' }).hass;
+    const speeds = Array.from(card.querySelectorAll('.port-speed')).map((el) => el.textContent);
+    assertTrue(speeds.includes('Nere'), 'expected the Swedish translation of Down for the offline port');
+  });
+
+  test('PoE badge text localizes (English vs Swedish)', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    card.hass = fakeHass({ states: baseStates(), language: 'en' }).hass;
+    assertTrue(Array.from(card.querySelectorAll('.poe-badge')).some((el) => el.textContent === 'PoE'));
+    card.hass = fakeHass({ states: baseStates(), language: 'sv' }).hass;
+    assertTrue(Array.from(card.querySelectorAll('.poe-badge')).some((el) => el.textContent === 'PoE'), 'PoE badge text itself is the same word in Swedish');
+  });
+
+  test('Card title falls back to the translated default when not configured', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    card.hass = fakeHass({ states: baseStates(), language: 'sv' }).hass;
+    assertEqual(card.querySelector('.card-title').textContent, 'TP-Link-switch');
+  });
+
+  // ---------------------------------------------------------------------
+  // Label editing — effective label + security escaping
+  // ---------------------------------------------------------------------
+  test('_effectiveLabel: a localStorage override wins over the config label', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ port_labels: { 1: 'From YAML' } }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    localStorage.setItem(card._labelStorageKey(), JSON.stringify({ 1: 'From localStorage' }));
+    card._localLabelsCache = null;
+    assertEqual(card._effectiveLabel(1), 'From localStorage');
+    localStorage.removeItem(card._labelStorageKey());
+  });
+
+  test('_effectiveLabel: an empty-string override removes a config label', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ port_labels: { 1: 'From YAML' } }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    localStorage.setItem(card._labelStorageKey(), JSON.stringify({ 1: '' }));
+    card._localLabelsCache = null;
+    assertEqual(card._effectiveLabel(1), '');
+    localStorage.removeItem(card._labelStorageKey());
+  });
+
+  test('A malicious port label never produces a real DOM element from the injected markup', () => {
+    const card = freshCard();
+    window.__pwned = false;
+    card.setConfig(baseConfig({ port_labels: { 1: '<img src=x onerror="window.__pwned=true">' } }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    assertTrue(!window.__pwned, '_escapeHtml must have neutralized the payload');
+    assertEqual(card.querySelectorAll('.port-label img').length, 0, 'no real <img> should have been created');
+  });
+
+  // ---------------------------------------------------------------------
+  // Service calls
+  // ---------------------------------------------------------------------
+  test('_toggle: turns an "on" entity off, and an "off" entity on', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const { hass, calls } = fakeHass({ states: baseStates({ 'switch.tp_link_switch_port_2_enabled': { state: 'off' } }) });
+    card.hass = hass;
+    card._toggle('switch.tp_link_switch_port_1_enabled');
+    assertEqual(calls[0].service, 'turn_off');
+    card._toggle('switch.tp_link_switch_port_2_enabled');
+    assertEqual(calls[1].service, 'turn_on');
+  });
+
+  test('_applyPortPoe sends the pending priority/power_limit with mac_address', async () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const { hass, calls } = fakeHass({ states: baseStates() });
+    card.hass = hass;
+    card._openConfigure(1);
+    card._pendingPoe.set(1, { priority: 'High', power_limit: 'Class 3' });
+    await card._applyPortPoe(1);
+    assertEqual(calls[0].domain, 'tplink_easy_smart');
+    assertEqual(calls[0].service, 'set_port_poe_settings');
+    assertEqual(calls[0].data.mac_address, 'AA:BB:CC:DD:EE:FF');
+    assertEqual(calls[0].data.priority, 'High');
+    assertEqual(calls[0].data.power_limit, 'Class 3');
+  });
+
+  // ---------------------------------------------------------------------
+  // PoE budget limit editor — max_poe_watts is a client-side input cap
+  // ONLY, never the value shown in the budget bar (a repeatedly-confused
+  // point per CLAUDE.md — worth a regression test).
+  // ---------------------------------------------------------------------
+  test('Budget bar always reads power_limit_w live, ignoring max_poe_watts', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ max_poe_watts: 30 }));
+    card.hass = fakeHass({ states: baseStates() }).hass;
+    const barText = card.querySelector('.poe-bar-header')?.textContent || '';
+    assertTrue(barText.includes('65'), 'budget bar must show the sensor\'s real power_limit_w (65), not max_poe_watts (30)');
+  });
+
+  test('Budget limit editor rejects a value of 0 without calling the service', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig());
+    const { hass, calls } = fakeHass({ states: baseStates() });
+    card.hass = hass;
+    card._pendingLimit = '0';
+    card._applyPoeLimitGlobal();
+    assertEqual(calls.length, 0);
+  });
+
+  test('Budget limit editor rejects a value above max_poe_watts without calling the service', () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ max_poe_watts: 30 }));
+    const { hass, calls } = fakeHass({ states: baseStates() });
+    card.hass = hass;
+    card._pendingLimit = '45';
+    card._applyPoeLimitGlobal();
+    assertEqual(calls.length, 0);
+  });
+
+  test('Budget limit editor accepts a valid value and calls set_general_poe_limit', async () => {
+    const card = freshCard();
+    card.setConfig(baseConfig({ max_poe_watts: 100 }));
+    const { hass, calls } = fakeHass({ states: baseStates() });
+    card.hass = hass;
+    card._pendingLimit = '80';
+    await card._applyPoeLimitGlobal();
+    assertEqual(calls[0].domain, 'tplink_easy_smart');
+    assertEqual(calls[0].service, 'set_general_poe_limit');
+    assertEqual(calls[0].data.mac_address, 'AA:BB:CC:DD:EE:FF');
+    assertEqual(calls[0].data.power_limit, 80);
+  });
+
+  // ---------------------------------------------------------------------
+  // Editor
+  // ---------------------------------------------------------------------
+  test('Editor _computeLabel is bound to the editor instance (reads this._hass)', () => {
+    const editor = freshEditor();
+    editor.setConfig(baseConfig());
+    editor.hass = fakeHass({ states: baseStates(), language: 'sv' }).hass;
+    assertEqual(editor._computeLabel({ name: 'title' }), 'Titel', 'if unbound, this._hass would be undefined and _t() would fall back to English');
+  });
+
+  const resultsEl = document.getElementById('results');
+  const summaryEl = document.getElementById('summary');
+  let passCount = 0;
+  let failCount = 0;
+
+  for (const { name, fn } of cases) {
+    const li = document.createElement('li');
+    try {
+      await fn();
+      passCount++;
+      li.className = 'pass';
+      li.textContent = `✓ ${name}`;
+    } catch (err) {
+      failCount++;
+      li.className = 'fail';
+      li.innerHTML = `✗ ${name}<span class="err"></span>`;
+      li.querySelector('.err').textContent = err.stack || String(err);
+      console.error(`FAIL: ${name}`, err);
+    }
+    resultsEl.appendChild(li);
+  }
+
+  summaryEl.className = `summary ${failCount === 0 ? 'pass' : 'fail'}`;
+  summaryEl.textContent = `${passCount}/${cases.length} passed` + (failCount ? ` — ${failCount} FAILED` : '');
+  window.__testSummary = { total: cases.length, passed: passCount, failed: failCount };
+  console.log(`tplink-switch-card tests: ${passCount}/${cases.length} passed`);
+})();
+</script>
+</body>
+</html>

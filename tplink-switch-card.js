@@ -38,18 +38,326 @@
   const DEFAULT_OVERVIEW_FIELDS = Object.freeze([
     "ip", "mac", "gateway", "netmask", "poe_used", "poe_remaining", "poe_budget",
   ]);
-  const OVERVIEW_FIELD_LABELS = Object.freeze({
-    ip: "IP address",
-    mac: "MAC address",
-    gateway: "Gateway",
-    netmask: "Netmask",
-    poe_used: "PoE used",
-    poe_remaining: "PoE remaining",
-    poe_budget: "PoE budget bar",
-  });
   const OVERVIEW_FIELD_SET = new Set(DEFAULT_OVERVIEW_FIELDS);
   const OVERVIEW_LAYOUTS = new Set(["tiles", "compact", "hidden"]);
   const MAX_LABEL_LENGTH = 40;
+
+  const DEFAULT_LANG = "en";
+
+  // Every UI string this file's card + editor render, keyed by BCP-47
+  // primary language subtag. Bundled inline (not fetched from separate
+  // translations/<lang>.json files) — see root CLAUDE.md's Kortkonventioner
+  // for why: HACS's plugin category only ever distributes the one file
+  // named in hacs.json, so extra files never reach a real install.
+  // POE_PRIORITIES / POE_POWER_LIMITS values above are NOT translated here —
+  // they are real tplink_easy_smart service parameters, not display text.
+  const TRANSLATIONS = {
+    en: {
+      title_default: "TP-Link Switch",
+      word_up: "Up",
+      word_down: "Down",
+      poe_badge_on: "PoE",
+      poe_badge_off: "no PoE",
+      ov_label_ip: "IP address",
+      ov_label_mac: "MAC",
+      ov_label_gateway: "Gateway",
+      ov_label_netmask: "Netmask",
+      ov_label_poe_used: "PoE used",
+      ov_label_poe_remaining: "PoE remaining",
+      ov_label_poe_budget: "PoE budget",
+      switch_ui_title: "Open switch UI",
+      limit_max_suffix: "max {max} W",
+      btn_set: "Set",
+      btn_cancel: "Cancel",
+      btn_applying: "Applying…",
+      limit_error_zero: "Enter a value greater than 0",
+      limit_error_max: "Cannot exceed hardware max of {max} W",
+      pencil_title: "Edit PoE budget limit",
+      section_poe_ports: "PoE ports 1–{to}",
+      stat_total: "Total",
+      stat_of: "of",
+      section_ports: "Ports {from}–{to}",
+      pill_up: "{up} / {total} up",
+      pill_poe: "{active} PoE · {watts} W",
+      port_word: "Port",
+      details_word: "details",
+      d_label_speed: "Speed",
+      d_label_configured: "Configured",
+      d_label_power: "Power",
+      d_label_current: "Current",
+      d_label_voltage: "Voltage",
+      d_label_pd_class: "PD class",
+      d_label_priority: "Priority",
+      d_label_limit: "Limit",
+      d_label_poe_enabled: "PoE enabled",
+      d_label_port_enabled: "Port enabled",
+      d_label_label: "Label",
+      label_placeholder: "Port name",
+      btn_save: "Save",
+      btn_saving: "Saving…",
+      btn_configure_poe: "Configure PoE",
+      configure_title: "Port {port} — PoE Settings",
+      cfg_label_power_limit: "Power limit",
+      btn_apply: "Apply",
+      placeholder_waiting: "Waiting for Home Assistant…",
+      aria_poe_enabled: "PoE enabled for port {port}",
+      aria_port_enabled: "Port {port} enabled",
+      editor_title: "Title",
+      editor_entity_prefix: "Entity prefix",
+      editor_has_poe: "Switch has PoE",
+      editor_poe_ports: "Number of PoE ports",
+      editor_max_poe_watts: "Hardware PoE max (W)",
+      editor_total_ports: "Total ports",
+      editor_overview_layout: "Overview layout",
+      editor_overview_fields: "Overview fields",
+      editor_show_switch_link: "Show switch web-UI link",
+      editor_font_scale: "Font scale",
+      editor_editable_labels: "Allow inline label editing",
+      editor_layout_tiles: "Tiles",
+      editor_layout_compact: "Compact",
+      editor_layout_hidden: "Hidden",
+      editor_field_ip: "IP address",
+      editor_field_mac: "MAC address",
+      editor_field_gateway: "Gateway",
+      editor_field_netmask: "Netmask",
+      editor_field_poe_used: "PoE used",
+      editor_field_poe_remaining: "PoE remaining",
+      editor_field_poe_budget: "PoE budget bar",
+    },
+    sv: {
+      title_default: "TP-Link-switch",
+      word_up: "Uppe",
+      word_down: "Nere",
+      poe_badge_on: "PoE",
+      poe_badge_off: "ingen PoE",
+      ov_label_ip: "IP-adress",
+      ov_label_mac: "MAC",
+      ov_label_gateway: "Gateway",
+      ov_label_netmask: "Nätmask",
+      ov_label_poe_used: "PoE använt",
+      ov_label_poe_remaining: "PoE kvar",
+      ov_label_poe_budget: "PoE-budget",
+      switch_ui_title: "Öppna switchens gränssnitt",
+      limit_max_suffix: "max {max} W",
+      btn_set: "Sätt",
+      btn_cancel: "Avbryt",
+      btn_applying: "Tillämpar…",
+      limit_error_zero: "Ange ett värde större än 0",
+      limit_error_max: "Kan inte överstiga hårdvarumax {max} W",
+      pencil_title: "Redigera PoE-budgetgräns",
+      section_poe_ports: "PoE-portar 1–{to}",
+      stat_total: "Totalt",
+      stat_of: "av",
+      section_ports: "Portar {from}–{to}",
+      pill_up: "{up} / {total} uppe",
+      pill_poe: "{active} PoE · {watts} W",
+      port_word: "Port",
+      details_word: "detaljer",
+      d_label_speed: "Hastighet",
+      d_label_configured: "Konfigurerad",
+      d_label_power: "Effekt",
+      d_label_current: "Ström",
+      d_label_voltage: "Spänning",
+      d_label_pd_class: "PD-klass",
+      d_label_priority: "Prioritet",
+      d_label_limit: "Gräns",
+      d_label_poe_enabled: "PoE aktiverad",
+      d_label_port_enabled: "Port aktiverad",
+      d_label_label: "Etikett",
+      label_placeholder: "Portnamn",
+      btn_save: "Spara",
+      btn_saving: "Sparar…",
+      btn_configure_poe: "Konfigurera PoE",
+      configure_title: "Port {port} — PoE-inställningar",
+      cfg_label_power_limit: "Effektgräns",
+      btn_apply: "Tillämpa",
+      placeholder_waiting: "Väntar på Home Assistant…",
+      aria_poe_enabled: "PoE aktiverad för port {port}",
+      aria_port_enabled: "Port {port} aktiverad",
+      editor_title: "Titel",
+      editor_entity_prefix: "Entitetsprefix",
+      editor_has_poe: "Switchen har PoE",
+      editor_poe_ports: "Antal PoE-portar",
+      editor_max_poe_watts: "Hårdvarans PoE-max (W)",
+      editor_total_ports: "Totalt antal portar",
+      editor_overview_layout: "Översiktslayout",
+      editor_overview_fields: "Översiktsfält",
+      editor_show_switch_link: "Visa länk till switchens webb-UI",
+      editor_font_scale: "Textskala",
+      editor_editable_labels: "Tillåt redigering av etiketter direkt i kortet",
+      editor_layout_tiles: "Rutor",
+      editor_layout_compact: "Kompakt",
+      editor_layout_hidden: "Dold",
+      editor_field_ip: "IP-adress",
+      editor_field_mac: "MAC-adress",
+      editor_field_gateway: "Gateway",
+      editor_field_netmask: "Nätmask",
+      editor_field_poe_used: "PoE använt",
+      editor_field_poe_remaining: "PoE kvar",
+      editor_field_poe_budget: "PoE-budgetbalk",
+    },
+    de: {
+      title_default: "TP-Link-Switch",
+      word_up: "Verbunden",
+      word_down: "Getrennt",
+      poe_badge_on: "PoE",
+      poe_badge_off: "kein PoE",
+      ov_label_ip: "IP-Adresse",
+      ov_label_mac: "MAC",
+      ov_label_gateway: "Gateway",
+      ov_label_netmask: "Netzmaske",
+      ov_label_poe_used: "PoE genutzt",
+      ov_label_poe_remaining: "PoE verbleibend",
+      ov_label_poe_budget: "PoE-Budget",
+      switch_ui_title: "Switch-Oberfläche öffnen",
+      limit_max_suffix: "max {max} W",
+      btn_set: "Setzen",
+      btn_cancel: "Abbrechen",
+      btn_applying: "Wird angewendet…",
+      limit_error_zero: "Geben Sie einen Wert größer als 0 ein",
+      limit_error_max: "Darf das Hardware-Maximum von {max} W nicht überschreiten",
+      pencil_title: "PoE-Budgetgrenze bearbeiten",
+      section_poe_ports: "PoE-Ports 1–{to}",
+      stat_total: "Gesamt",
+      stat_of: "von",
+      section_ports: "Ports {from}–{to}",
+      pill_up: "{up} / {total} verbunden",
+      pill_poe: "{active} PoE · {watts} W",
+      port_word: "Port",
+      details_word: "Details",
+      d_label_speed: "Geschwindigkeit",
+      d_label_configured: "Konfiguriert",
+      d_label_power: "Leistung",
+      d_label_current: "Strom",
+      d_label_voltage: "Spannung",
+      d_label_pd_class: "PD-Klasse",
+      d_label_priority: "Priorität",
+      d_label_limit: "Grenze",
+      d_label_poe_enabled: "PoE aktiviert",
+      d_label_port_enabled: "Port aktiviert",
+      d_label_label: "Bezeichnung",
+      label_placeholder: "Portname",
+      btn_save: "Speichern",
+      btn_saving: "Wird gespeichert…",
+      btn_configure_poe: "PoE konfigurieren",
+      configure_title: "Port {port} — PoE-Einstellungen",
+      cfg_label_power_limit: "Leistungsgrenze",
+      btn_apply: "Übernehmen",
+      placeholder_waiting: "Warte auf Home Assistant…",
+      aria_poe_enabled: "PoE aktiviert für Port {port}",
+      aria_port_enabled: "Port {port} aktiviert",
+      editor_title: "Titel",
+      editor_entity_prefix: "Entitätspräfix",
+      editor_has_poe: "Switch hat PoE",
+      editor_poe_ports: "Anzahl PoE-Ports",
+      editor_max_poe_watts: "Hardware-PoE-Maximum (W)",
+      editor_total_ports: "Ports gesamt",
+      editor_overview_layout: "Übersichtslayout",
+      editor_overview_fields: "Übersichtsfelder",
+      editor_show_switch_link: "Link zur Switch-Web-UI anzeigen",
+      editor_font_scale: "Schriftskalierung",
+      editor_editable_labels: "Inline-Bearbeitung von Bezeichnungen erlauben",
+      editor_layout_tiles: "Kacheln",
+      editor_layout_compact: "Kompakt",
+      editor_layout_hidden: "Ausgeblendet",
+      editor_field_ip: "IP-Adresse",
+      editor_field_mac: "MAC-Adresse",
+      editor_field_gateway: "Gateway",
+      editor_field_netmask: "Netzmaske",
+      editor_field_poe_used: "PoE genutzt",
+      editor_field_poe_remaining: "PoE verbleibend",
+      editor_field_poe_budget: "PoE-Budgetbalken",
+    },
+    fr: {
+      title_default: "Switch TP-Link",
+      word_up: "Connecté",
+      word_down: "Déconnecté",
+      poe_badge_on: "PoE",
+      poe_badge_off: "pas de PoE",
+      ov_label_ip: "Adresse IP",
+      ov_label_mac: "MAC",
+      ov_label_gateway: "Passerelle",
+      ov_label_netmask: "Masque de sous-réseau",
+      ov_label_poe_used: "PoE utilisé",
+      ov_label_poe_remaining: "PoE restant",
+      ov_label_poe_budget: "Budget PoE",
+      switch_ui_title: "Ouvrir l'interface du switch",
+      limit_max_suffix: "max {max} W",
+      btn_set: "Définir",
+      btn_cancel: "Annuler",
+      btn_applying: "Application…",
+      limit_error_zero: "Entrez une valeur supérieure à 0",
+      limit_error_max: "Ne peut pas dépasser le maximum matériel de {max} W",
+      pencil_title: "Modifier la limite du budget PoE",
+      section_poe_ports: "Ports PoE 1–{to}",
+      stat_total: "Total",
+      stat_of: "sur",
+      section_ports: "Ports {from}–{to}",
+      pill_up: "{up} / {total} connectés",
+      pill_poe: "{active} PoE · {watts} W",
+      port_word: "Port",
+      details_word: "détails",
+      d_label_speed: "Vitesse",
+      d_label_configured: "Configuré",
+      d_label_power: "Puissance",
+      d_label_current: "Courant",
+      d_label_voltage: "Tension",
+      d_label_pd_class: "Classe PD",
+      d_label_priority: "Priorité",
+      d_label_limit: "Limite",
+      d_label_poe_enabled: "PoE activé",
+      d_label_port_enabled: "Port activé",
+      d_label_label: "Étiquette",
+      label_placeholder: "Nom du port",
+      btn_save: "Enregistrer",
+      btn_saving: "Enregistrement…",
+      btn_configure_poe: "Configurer PoE",
+      configure_title: "Port {port} — Paramètres PoE",
+      cfg_label_power_limit: "Limite de puissance",
+      btn_apply: "Appliquer",
+      placeholder_waiting: "En attente de Home Assistant…",
+      aria_poe_enabled: "PoE activé pour le port {port}",
+      aria_port_enabled: "Port {port} activé",
+      editor_title: "Titre",
+      editor_entity_prefix: "Préfixe d'entité",
+      editor_has_poe: "Le switch a du PoE",
+      editor_poe_ports: "Nombre de ports PoE",
+      editor_max_poe_watts: "Maximum PoE matériel (W)",
+      editor_total_ports: "Nombre total de ports",
+      editor_overview_layout: "Disposition de l'aperçu",
+      editor_overview_fields: "Champs de l'aperçu",
+      editor_show_switch_link: "Afficher le lien vers l'interface web du switch",
+      editor_font_scale: "Échelle de police",
+      editor_editable_labels: "Autoriser l'édition des étiquettes en ligne",
+      editor_layout_tiles: "Tuiles",
+      editor_layout_compact: "Compact",
+      editor_layout_hidden: "Masqué",
+      editor_field_ip: "Adresse IP",
+      editor_field_mac: "Adresse MAC",
+      editor_field_gateway: "Passerelle",
+      editor_field_netmask: "Masque de sous-réseau",
+      editor_field_poe_used: "PoE utilisé",
+      editor_field_poe_remaining: "PoE restant",
+      editor_field_poe_budget: "Barre de budget PoE",
+    },
+  };
+
+  /** Resolves the HA-configured language to one of our translated languages, falling back to English. */
+  function _lang(hass) {
+    const raw = (hass?.locale?.language || hass?.language || DEFAULT_LANG).toLowerCase();
+    const primary = raw.split("-")[0];
+    return TRANSLATIONS[primary] ? primary : DEFAULT_LANG;
+  }
+
+  /** Looks up a UI string in the current language, with {placeholder} substitution. */
+  function _t(hass, key, replacements) {
+    const dict = TRANSLATIONS[_lang(hass)] || TRANSLATIONS[DEFAULT_LANG];
+    const raw = dict[key] ?? TRANSLATIONS[DEFAULT_LANG][key] ?? key;
+    if (!replacements) return raw;
+    return raw.replace(/\{([^}]+)\}/g, (match, k) =>
+      Object.prototype.hasOwnProperty.call(replacements, k) ? replacements[k] : match
+    );
+  }
 
   class TplinkSwitchCard extends HTMLElement {
     constructor() {
@@ -75,7 +383,7 @@
       if (!config) throw new Error("Missing configuration");
       this._rawConfig = config; // untouched original — used to locate this card in the Lovelace config
       this.config = {
-        title: "TP-Link Switch",
+        title: null,
         has_poe: true,
         poe_ports: 8,
         total_ports: 16,
@@ -446,11 +754,11 @@
       const maxW = this.config.max_poe_watts;
 
       if (isNaN(val) || val <= 0) {
-        this._showLimitError("Enter a value greater than 0");
+        this._showLimitError(_t(this._hass, "limit_error_zero"));
         return;
       }
       if (maxW && val > maxW) {
-        this._showLimitError(`Cannot exceed hardware max of ${maxW} W`);
+        this._showLimitError(_t(this._hass, "limit_error_max", { max: maxW }));
         return;
       }
       if (!this._hass) return;
@@ -898,12 +1206,12 @@
             value="${this._pendingLimit || limitW}"
             min="1" max="${maxPoeW || 1000}" step="0.5">
           <span class="limit-unit">W</span>
-          ${maxPoeW ? `<span class="limit-unit" style="color:var(--secondary-text-color)">max ${maxPoeW} W</span>` : ""}
+          ${maxPoeW ? `<span class="limit-unit" style="color:var(--secondary-text-color)">${_t(this._hass, "limit_max_suffix", { max: maxPoeW })}</span>` : ""}
           <span class="limit-error" id="poe-limit-error" style="display:none;color:var(--error-color, #c22040);font-size:${this._fs(0.72)}"></span>
           <button class="btn-apply" id="poe-limit-apply" ${this._applyingLimit ? "disabled" : ""}>
-            ${this._applyingLimit ? "Applying…" : "Set"}
+            ${this._applyingLimit ? _t(this._hass, "btn_applying") : _t(this._hass, "btn_set")}
           </button>
-          <button class="btn-cancel" id="poe-limit-cancel">Cancel</button>
+          <button class="btn-cancel" id="poe-limit-cancel">${_t(this._hass, "btn_cancel")}</button>
         </div>` : "";
 
       const renderField = field => {
@@ -911,10 +1219,10 @@
           case "ip":
             return `
               <div class="ov-item copyable" data-copy="${this._escapeHtml(ip)}">
-                <div class="ov-label">IP address</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_ip")}</div>
                 <div class="ov-value-row">
                   <div class="ov-value" style="flex:1">${this._escapeHtml(ip)}</div>
-                  ${switchUrl ? `<a class="ui-link" href="${this._escapeHtml(switchUrl)}" target="_blank" rel="noreferrer" title="Open switch UI">
+                  ${switchUrl ? `<a class="ui-link" href="${this._escapeHtml(switchUrl)}" target="_blank" rel="noreferrer" title="${_t(this._hass, "switch_ui_title")}">
                     <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
                       <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
@@ -926,35 +1234,35 @@
           case "mac":
             return `
               <div class="ov-item copyable" data-copy="${this._escapeHtml(mac)}">
-                <div class="ov-label">MAC</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_mac")}</div>
                 <div class="ov-value" style="font-size:${this._fs(0.76)};letter-spacing:0.02em">${this._escapeHtml(mac)}</div>
               </div>`;
 
           case "gateway":
             return `
               <div class="ov-item">
-                <div class="ov-label">Gateway</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_gateway")}</div>
                 <div class="ov-value">${this._escapeHtml(gateway)}</div>
               </div>`;
 
           case "netmask":
             return `
               <div class="ov-item">
-                <div class="ov-label">Netmask</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_netmask")}</div>
                 <div class="ov-value">${this._escapeHtml(mask)}</div>
               </div>`;
 
           case "poe_used":
             return hasPoe ? `
               <div class="ov-item">
-                <div class="ov-label">PoE used</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_poe_used")}</div>
                 <div class="ov-value poe">${consumed.toFixed(1)} W</div>
               </div>` : "";
 
           case "poe_remaining":
             return hasPoe ? `
               <div class="ov-item">
-                <div class="ov-label">PoE remaining</div>
+                <div class="ov-label">${_t(this._hass, "ov_label_poe_remaining")}</div>
                 <div class="ov-value remain">${remainW.toFixed(1)} W</div>
               </div>` : "";
 
@@ -962,10 +1270,10 @@
             return hasPoe ? `
               <div class="poe-bar-wrap">
                 <div class="poe-bar-header">
-                  <div class="ov-label">PoE budget</div>
+                  <div class="ov-label">${_t(this._hass, "ov_label_poe_budget")}</div>
                   <div style="display:flex;align-items:center;gap:0.3rem">
                     <div class="ov-label">${consumed.toFixed(1)} / ${limitW} W (${pct.toFixed(0)}%)</div>
-                    <button class="edit-pencil" id="poe-limit-edit" title="Edit PoE budget limit">✏️</button>
+                    <button class="edit-pencil" id="poe-limit-edit" title="${_t(this._hass, "pencil_title")}">✏️</button>
                   </div>
                 </div>
                 <div class="poe-bar-track">
@@ -1010,14 +1318,14 @@
 
       const mainRow = `
         <tr class="port-row${canExpand ? " expandable" : ""}" data-port="${port}"
-          ${canExpand ? `role="button" tabindex="0" aria-expanded="${expanded}" aria-label="Port ${port}${safeLabel ? ` ${safeLabel}` : ""} details"` : ""}>
+          ${canExpand ? `role="button" tabindex="0" aria-expanded="${expanded}" aria-label="${_t(this._hass, "port_word")} ${port}${safeLabel ? ` ${safeLabel}` : ""} ${_t(this._hass, "details_word")}"` : ""}>
           <td class="port-num ${isUp ? "up" : ""}">P${port}</td>
           <td class="port-info-cell">
             <div class="port-info">
               <span class="link-dot ${isUp ? "up" : ""}"></span>
-              <span class="port-speed ${isUp ? "active" : ""}">${isUp && speed ? this._fmtSpeed(speed) : isUp ? "Up" : "Down"}</span>
+              <span class="port-speed ${isUp ? "active" : ""}">${isUp && speed ? this._fmtSpeed(speed) : isUp ? _t(this._hass, "word_up") : _t(this._hass, "word_down")}</span>
               ${safeLabel ? `<span class="port-label" title="${safeLabel}">${safeLabel}</span>` : ""}
-              ${hasPoe ? `<span class="poe-badge ${poeOn ? "active" : ""}">${poeOn ? "PoE" : "no PoE"}</span>` : ""}
+              ${hasPoe ? `<span class="poe-badge ${poeOn ? "active" : ""}">${poeOn ? _t(this._hass, "poe_badge_on") : _t(this._hass, "poe_badge_off")}</span>` : ""}
             </div>
           </td>
           <td class="port-watt ${!hasPoe || watts === 0 ? "zero" : ""}">${hasPoe && watts > 0 ? watts.toFixed(1) + " W" : hasPoe ? "—" : ""}</td>
@@ -1034,13 +1342,13 @@
       const draft       = this._labelDrafts.get(port);
       const labelEditor = this.config.editable_labels ? `
         <div class="d-item">
-          <div class="d-label">Label</div>
+          <div class="d-label">${_t(this._hass, "d_label_label")}</div>
           <div class="label-edit-row">
             <input class="label-input" type="text" maxlength="${MAX_LABEL_LENGTH}"
-              placeholder="Port name" data-label-port="${port}"
+              placeholder="${_t(this._hass, "label_placeholder")}" data-label-port="${port}"
               value="${this._escapeHtml(draft ?? portLabel)}">
             <button class="btn-apply" data-label-save="${port}" ${savingLabel ? "disabled" : ""}>
-              ${savingLabel ? "Saving…" : "Save"}
+              ${savingLabel ? _t(this._hass, "btn_saving") : _t(this._hass, "btn_save")}
             </button>
           </div>
         </div>` : "";
@@ -1050,21 +1358,21 @@
         <tr class="detail-row">
           <td colspan="4">
             <div class="detail-inner">
-              ${isUp && speed ? `<div class="d-item"><div class="d-label">Speed</div><div class="d-value good">${this._fmtSpeed(speed)}</div></div>` : ""}
-              ${speedConfig   ? `<div class="d-item"><div class="d-label">Configured</div><div class="d-value muted">${speedConfig}</div></div>` : ""}
+              ${isUp && speed ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_speed")}</div><div class="d-value good">${this._fmtSpeed(speed)}</div></div>` : ""}
+              ${speedConfig   ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_configured")}</div><div class="d-value muted">${speedConfig}</div></div>` : ""}
               ${hasPoe && poeOn ? `
-                <div class="d-item"><div class="d-label">Power</div><div class="d-value poe">${watts.toFixed(1)} W</div></div>
-                ${attr.current_ma != null ? `<div class="d-item"><div class="d-label">Current</div><div class="d-value">${attr.current_ma} mA</div></div>` : ""}
-                ${attr.voltage_v  != null ? `<div class="d-item"><div class="d-label">Voltage</div><div class="d-value">${attr.voltage_v} V</div></div>` : ""}
-                ${attr.pd_class   ? `<div class="d-item"><div class="d-label">PD class</div><div class="d-value">${attr.pd_class}</div></div>` : ""}
+                <div class="d-item"><div class="d-label">${_t(this._hass, "d_label_power")}</div><div class="d-value poe">${watts.toFixed(1)} W</div></div>
+                ${attr.current_ma != null ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_current")}</div><div class="d-value">${attr.current_ma} mA</div></div>` : ""}
+                ${attr.voltage_v  != null ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_voltage")}</div><div class="d-value">${attr.voltage_v} V</div></div>` : ""}
+                ${attr.pd_class   ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_pd_class")}</div><div class="d-value">${attr.pd_class}</div></div>` : ""}
               ` : ""}
-              ${hasPoe && attr.priority    ? `<div class="d-item"><div class="d-label">Priority</div><div class="d-value">${attr.priority}</div></div>` : ""}
-              ${hasPoe && attr.power_limit ? `<div class="d-item"><div class="d-label">Limit</div><div class="d-value">${attr.power_limit}</div></div>` : ""}
-              ${poeEnabledId  ? `<div class="d-item"><div class="d-label">PoE enabled</div>${this._renderToggle(poeEnabledId, `PoE enabled for port ${port}`)}</div>`  : ""}
-              ${portEnabledId ? `<div class="d-item"><div class="d-label">Port enabled</div>${this._renderToggle(portEnabledId, `Port ${port} enabled`)}</div>` : ""}
+              ${hasPoe && attr.priority    ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_priority")}</div><div class="d-value">${attr.priority}</div></div>` : ""}
+              ${hasPoe && attr.power_limit ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_limit")}</div><div class="d-value">${attr.power_limit}</div></div>` : ""}
+              ${poeEnabledId  ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_poe_enabled")}</div>${this._renderToggle(poeEnabledId, _t(this._hass, "aria_poe_enabled", { port }))}</div>`  : ""}
+              ${portEnabledId ? `<div class="d-item"><div class="d-label">${_t(this._hass, "d_label_port_enabled")}</div>${this._renderToggle(portEnabledId, _t(this._hass, "aria_port_enabled", { port }))}</div>` : ""}
               ${labelEditor}
               ${hasPoe ? `<button class="btn-configure" data-configure="${port}" ${applying ? "disabled" : ""}>
-                ${applying ? "Applying…" : "Configure PoE"}
+                ${applying ? _t(this._hass, "btn_applying") : _t(this._hass, "btn_configure_poe")}
               </button>` : ""}
             </div>
           </td>
@@ -1075,16 +1383,16 @@
         <tr class="configure-row">
           <td colspan="4">
             <div class="configure-inner">
-              <div class="configure-title">Port ${port} — PoE Settings</div>
+              <div class="configure-title">${_t(this._hass, "configure_title", { port })}</div>
               <div class="configure-fields">
                 <div class="cfg-field">
-                  <div class="cfg-label">Priority</div>
+                  <div class="cfg-label">${_t(this._hass, "d_label_priority")}</div>
                   <select class="cfg-select" data-cfg-port="${port}" data-cfg-key="priority">
                     ${POE_PRIORITIES.map(v => `<option value="${v}" ${(pending.priority ?? attr.priority) === v ? "selected" : ""}>${v}</option>`).join("")}
                   </select>
                 </div>
                 <div class="cfg-field">
-                  <div class="cfg-label">Power limit</div>
+                  <div class="cfg-label">${_t(this._hass, "cfg_label_power_limit")}</div>
                   <select class="cfg-select" data-cfg-port="${port}" data-cfg-key="power_limit">
                     ${POE_POWER_LIMITS.map(v => `<option value="${v}" ${(pending.power_limit ?? attr.power_limit) === v ? "selected" : ""}>${v}</option>`).join("")}
                   </select>
@@ -1092,9 +1400,9 @@
               </div>
               <div class="configure-actions">
                 <button class="btn-apply" data-apply-port="${port}" ${applying ? "disabled" : ""}>
-                  ${applying ? "Applying…" : "Apply"}
+                  ${applying ? _t(this._hass, "btn_applying") : _t(this._hass, "btn_apply")}
                 </button>
-                <button class="btn-cancel" data-cancel-port="${port}">Cancel</button>
+                <button class="btn-cancel" data-cancel-port="${port}">${_t(this._hass, "btn_cancel")}</button>
               </div>
             </div>
           </td>
@@ -1113,7 +1421,7 @@
     render() {
       if (!this.config) return;
       if (!this._hass) {
-        this.innerHTML = `<div class="card"><style>${this._css()}</style><div class="placeholder">Waiting for Home Assistant…</div></div>`;
+        this.innerHTML = `<div class="card"><style>${this._css()}</style><div class="placeholder">${_t(this._hass, "placeholder_waiting")}</div></div>`;
         return;
       }
 
@@ -1145,10 +1453,10 @@
         <div class="card">
           <style>${this._css()}</style>
           <div class="card-header">
-            <div class="card-title">${this.config.title}</div>
+            <div class="card-title">${this.config.title || _t(this._hass, "title_default")}</div>
             <div class="summary-pills">
-              <div class="pill up">${portsUp} / ${this.config.total_ports} up</div>
-              ${hasPoe ? `<div class="pill poe" style="color:${headerPoeColor}">${poeActive} PoE · ${totalWatts.toFixed(1)} W</div>` : ""}
+              <div class="pill up">${_t(this._hass, "pill_up", { up: portsUp, total: this.config.total_ports })}</div>
+              ${hasPoe ? `<div class="pill poe" style="color:${headerPoeColor}">${_t(this._hass, "pill_poe", { active: poeActive, watts: totalWatts.toFixed(1) })}</div>` : ""}
             </div>
           </div>
 
@@ -1157,8 +1465,8 @@
           ${hasPoe ? `
           <div class="section">
             <div class="section-header">
-              <div class="section-label">PoE ports 1–${this.config.poe_ports}</div>
-              <div class="section-stat">Total <span>${totalWatts.toFixed(1)} W</span> of ${limitW} W</div>
+              <div class="section-label">${_t(this._hass, "section_poe_ports", { to: this.config.poe_ports })}</div>
+              <div class="section-stat">${_t(this._hass, "stat_total")} <span>${totalWatts.toFixed(1)} W</span> ${_t(this._hass, "stat_of")} ${limitW} W</div>
             </div>
             <table class="port-table">
               <tbody>${poePorts.map(p => this._renderPort(p, true)).join("")}</tbody>
@@ -1168,7 +1476,7 @@
 
           <div class="section">
             <div class="section-header">
-              <div class="section-label">${hasPoe ? `Ports ${this.config.poe_ports + 1}–${this.config.total_ports}` : `Ports 1–${this.config.total_ports}`}</div>
+              <div class="section-label">${hasPoe ? _t(this._hass, "section_ports", { from: this.config.poe_ports + 1, to: this.config.total_ports }) : _t(this._hass, "section_ports", { from: 1, to: this.config.total_ports })}</div>
             </div>
             <table class="port-table">
               <tbody>${regularPorts.map(p => this._renderPort(p, false)).join("")}</tbody>
@@ -1388,14 +1696,14 @@
       schema.push(
         { name: "total_ports", selector: { number: { min: 1, max: 48, mode: "box" } } },
         { name: "overview_layout", selector: { select: { mode: "dropdown", options: [
-          { value: "tiles", label: "Tiles" },
-          { value: "compact", label: "Compact" },
-          { value: "hidden", label: "Hidden" },
+          { value: "tiles", label: _t(this._hass, "editor_layout_tiles") },
+          { value: "compact", label: _t(this._hass, "editor_layout_compact") },
+          { value: "hidden", label: _t(this._hass, "editor_layout_hidden") },
         ] } } },
         { name: "overview_fields", selector: { select: {
           multiple: true,
           mode: "list",
-          options: DEFAULT_OVERVIEW_FIELDS.map(f => ({ value: f, label: OVERVIEW_FIELD_LABELS[f] })),
+          options: DEFAULT_OVERVIEW_FIELDS.map(f => ({ value: f, label: _t(this._hass, "editor_field_" + f) })),
         } } },
         { name: "show_switch_link", selector: { boolean: {} } },
         { name: "font_scale", selector: { number: { min: 0.7, max: 2, step: 0.1, mode: "slider" } } },
@@ -1405,20 +1713,7 @@
     }
 
     _computeLabel(schema) {
-      const labels = {
-        title: "Title",
-        entity_prefix: "Entity prefix",
-        has_poe: "Switch has PoE",
-        poe_ports: "Number of PoE ports",
-        max_poe_watts: "Hardware PoE max (W)",
-        total_ports: "Total ports",
-        overview_layout: "Overview layout",
-        overview_fields: "Overview fields",
-        show_switch_link: "Show switch web-UI link",
-        font_scale: "Font scale",
-        editable_labels: "Allow inline label editing",
-      };
-      return labels[schema.name] ?? schema.name;
+      return _t(this._hass, "editor_" + schema.name);
     }
 
     _render() {
@@ -1440,7 +1735,7 @@
       form.hass = this._hass;
       form.data = this._config;
       form.schema = this._schema();
-      form.computeLabel = this._computeLabel;
+      form.computeLabel = this._computeLabel.bind(this);
     }
   }
 
