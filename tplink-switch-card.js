@@ -88,6 +88,8 @@
       section_poe_ports: "PoE ports 1–{to}",
       stat_total: "Total",
       stat_of: "of",
+      spark_ago: "-{h}h",
+      spark_now: "now",
       section_ports: "Ports {from}–{to}",
       pill_up: "{up} / {total} up",
       pill_poe: "{active} PoE · {watts} W",
@@ -161,6 +163,8 @@
       section_poe_ports: "PoE-portar 1–{to}",
       stat_total: "Totalt",
       stat_of: "av",
+      spark_ago: "-{h}h",
+      spark_now: "nu",
       section_ports: "Portar {from}–{to}",
       pill_up: "{up} / {total} uppe",
       pill_poe: "{active} PoE · {watts} W",
@@ -234,6 +238,8 @@
       section_poe_ports: "PoE-Ports 1–{to}",
       stat_total: "Gesamt",
       stat_of: "von",
+      spark_ago: "-{h}h",
+      spark_now: "jetzt",
       section_ports: "Ports {from}–{to}",
       pill_up: "{up} / {total} verbunden",
       pill_poe: "{active} PoE · {watts} W",
@@ -307,6 +313,8 @@
       section_poe_ports: "Ports PoE 1–{to}",
       stat_total: "Total",
       stat_of: "sur",
+      spark_ago: "-{h}h",
+      spark_now: "maintenant",
       section_ports: "Ports {from}–{to}",
       pill_up: "{up} / {total} connectés",
       pill_poe: "{active} PoE · {watts} W",
@@ -989,6 +997,11 @@
         }
         .poe-spark-wrap { margin-top: 0.4rem; }
         .poe-spark { display: block; width: 100%; height: 22px; }
+        .poe-spark-foot {
+          display: flex; justify-content: space-between; margin-top: 0.15rem;
+          font-size: ${fs(0.62)}; color: var(--secondary-text-color);
+          font-variant-numeric: tabular-nums;
+        }
 
         /* Limit editor */
         .limit-editor {
@@ -1330,7 +1343,15 @@
     _renderPoeSparkline(limitW) {
       if (!limitW) return ""; // no hardware budget to scale a percentage against
       this._refreshPoeHistory();
-      return `<div class="poe-spark-wrap">${this._renderPoeSparkSvg(limitW)}</div>`;
+      const hours = this.config.poe_history_hours;
+      return `
+        <div class="poe-spark-wrap">
+          ${this._renderPoeSparkSvg(limitW)}
+          <div class="poe-spark-foot">
+            <span>${_t(this._hass, "spark_ago", { h: hours })}</span>
+            <span>${_t(this._hass, "spark_now")}</span>
+          </div>
+        </div>`;
     }
 
     _renderPoeSparkSvg(limitW) {
@@ -1346,14 +1367,27 @@
       const x = i => (i / (n - 1)) * W;
       const y = v => H - PAD - (v / scaleMax) * (H - PAD * 2);
 
-      let segs = "";
+      // Subtle fill under the line, then dashed 80%/95% threshold guides —
+      // without these the line reads as flat/context-free on a switch
+      // that's nowhere near its budget, even though that IS the correct
+      // reading (see the mockup this was built from: the guides are what
+      // make "far from the danger zone" visually legible, not the line
+      // itself).
+      let fillD = `M ${x(0).toFixed(1)} ${H} L ${x(0).toFixed(1)} ${y(values[0]).toFixed(1)}`;
+      for (let i = 1; i < n; i++) fillD += ` L ${x(i).toFixed(1)} ${y(values[i]).toFixed(1)}`;
+      fillD += ` L ${x(n - 1).toFixed(1)} ${H} Z`;
+
+      let markup = `<path d="${fillD}" fill="var(--secondary-text-color, #9e9e9e)" opacity="0.08" stroke="none"/>`;
+      markup += `<line x1="0" y1="${y(limit * 0.95).toFixed(1)}" x2="${W}" y2="${y(limit * 0.95).toFixed(1)}" stroke="var(--error-color, #c22040)" stroke-opacity="0.3" stroke-width="1" stroke-dasharray="2 2"/>`;
+      markup += `<line x1="0" y1="${y(limit * 0.8).toFixed(1)}" x2="${W}" y2="${y(limit * 0.8).toFixed(1)}" stroke="var(--warning-color, #f4b942)" stroke-opacity="0.3" stroke-width="1" stroke-dasharray="2 2"/>`;
+
       for (let i = 1; i < n; i++) {
         const v0 = values[i - 1], v1 = values[i];
         const segPct = Math.min(100, (Math.max(v0, v1) / limit) * 100);
         const color = this._poeBarColor(segPct);
-        segs += `<line x1="${x(i - 1).toFixed(1)}" y1="${y(v0).toFixed(1)}" x2="${x(i).toFixed(1)}" y2="${y(v1).toFixed(1)}" stroke="${color}" stroke-width="1.6" stroke-linecap="round"/>`;
+        markup += `<line x1="${x(i - 1).toFixed(1)}" y1="${y(v0).toFixed(1)}" x2="${x(i).toFixed(1)}" y2="${y(v1).toFixed(1)}" stroke="${color}" stroke-width="1.6" stroke-linecap="round"/>`;
       }
-      return `<svg class="poe-spark" id="poe-history-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${segs}</svg>`;
+      return `<svg class="poe-spark" id="poe-history-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${markup}</svg>`;
     }
 
     _renderOverview() {
