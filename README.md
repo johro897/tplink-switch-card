@@ -133,6 +133,10 @@ The card has three interaction levels:
 
 ![](screenshots/port_detail.png)
 
+Non-PoE ports (or PoE ports beyond `poe_ports`) expand to a simpler version of the same row — just speed, configured status, the port-enabled toggle, and the label field:
+
+![](screenshots/port_config_non_poe.png)
+
 **3. Configure panel** — click **Configure PoE** inside the detail row to open an inline editor for PoE priority and power limit. Hit **Apply** to send the change to the switch, or **Cancel** to close without saving.
 
 ![](screenshots/configure_panel.png)
@@ -224,6 +228,8 @@ overview_fields:
   - netmask
 ```
 
+![Compact overview layout](screenshots/overview_compact.png)
+
 Keep the IP address but hide the web-interface shortcut:
 
 ```yaml
@@ -285,15 +291,29 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ### Full card overview
 ![Full card overview](screenshots/overview.png)
-*Switch overview tiles, PoE budget bar, PoE port section and regular port section.*
+*Switch overview tiles, PoE budget bar with consumption sparkline, PoE port section and regular port section.*
 
 ### Overview tiles — copy and UI link
 ![Overview tiles with IP copy and link icon](screenshots/overview_tiles.png)
 *Click the IP or MAC tile to copy the value. The link icon opens the switch web UI in a new tab.*
 
+![IP tile showing the click-to-copy hint](screenshots/copy_content.png)
+*Hovering a copyable tile shows what it does before you click.*
+
+### Compact overview layout
+![Compact overview layout](screenshots/overview_compact.png)
+*`overview_layout: compact` — the same fields in a denser, label-on-the-left layout instead of tiles.*
+
+### Port labels and PoE badges
+![Port list with custom labels and PoE badges](screenshots/port_down.png)
+*Ports with a configured label show it inline; the PoE badge distinguishes powered ports from regular ones at a glance.*
+
 ### Expanded port detail
 ![Expanded port detail row](screenshots/port_detail.png)
 *Expand a port to see all sensor values, configured speed, enable toggles and the label editor.*
+
+![Expanded detail row for a non-PoE port](screenshots/port_config_non_poe.png)
+*A non-PoE port gets a shorter version of the same row — no PoE fields, no Configure PoE button.*
 
 ### PoE configure panel
 ![PoE configure panel with priority and power limit dropdowns](screenshots/configure_panel.png)
@@ -301,11 +321,11 @@ Entities that are missing or unavailable are handled gracefully — the correspo
 
 ### PoE budget editor with hardware cap
 ![PoE budget editor showing max_poe_watts warning](screenshots/poe_budget_editor.png)
-*The budget editor shows the hardware cap and blocks Apply if the value exceeds it.*
+*The budget editor shows the hardware cap and blocks Apply if the value exceeds it. The sparkline below it shows the last `poe_history_hours` of consumption.*
 
 ### PoE budget warning
-![PoE bar turning amber at high load](screenshots/poe_warning.png)
-*Budget bar turns amber above 80% and red above 95% load.*
+![PoE bar and sparkline turning red at maximum load](screenshots/poe_warning.png)
+*Both the budget bar and the sparkline turn amber above 80% and red above 95% load — the same thresholds, so a spike reads consistently everywhere it shows up.*
 
 ---
 
@@ -353,6 +373,10 @@ Other TP-Link Easy Smart switches using the same integration should work as long
 - Default window is 24 hours, configurable up to 7 days via the new `poe_history_hours` option (also exposed in the visual editor)
 - Downsampled to a fixed number of points using the max value per bucket, not an average, so spikes stay visible even on a multi-day view
 - Uses Home Assistant's own History API — the same approach as `electricity-pie-card` — so there's no new dependency, only your `recorder` integration's own retention setting limits how far back it can show
+
+**Screenshots** — [#4](https://github.com/johro897/tplink-switch-card/issues/4)
+- Refreshed every screenshot from a live instance so they reflect the current card, including the new PoE sparkline
+- Added new screenshots: compact overview layout, the click-to-copy hint, a non-PoE port's detail row, and port labels with PoE badges
 
 ### 1.6.0
 **Security hardening** — [#11](https://github.com/johro897/tplink-switch-card/issues/11)
